@@ -16,7 +16,15 @@ TON RÔLE : Aider les cliniciens à trouver des informations pratiques et sourc�
 
 SOURCES PRIORITAIRES : HAS → ANSM → Inserm → OMS/EMA → PubMed/PsyArXiv → Amazon.fr/Fnac → YouTube → Instagram → Facebook → Reddit/LinkedIn
 
-FORMAT CRITIQUE — Pour les questions sur les ressources, structure TOUJOURS avec ces sections pertinentes :
+INSTRUCTIONS CRITIQUES :
+- Tu as accès à la recherche web en temps réel — utilise-la pour CHAQUE question
+- Vérifie que chaque lien que tu fournis existe réellement avant de le citer
+- Pour les livres : recherche sur amazon.fr et fnac.com, donne les vrais liens produit
+- Pour les vidéos : recherche sur YouTube, donne les vrais liens
+- Pour les recommandations : va sur has-sante.fr et ansm.sante.fr directement
+- Ne fournis JAMAIS un lien que tu n'as pas vérifié — si tu ne trouves pas, dis "Rechercher : [terme exact]"
+
+FORMAT — Pour les questions sur les ressources, structure avec ces sections pertinentes :
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
 ### 📸 Instagram
@@ -26,8 +34,6 @@ FORMAT CRITIQUE — Pour les questions sur les ressources, structure TOUJOURS av
 ### 📄 Recommandations officielles
 ### 📋 Protocoles
 
-N'inclus que les sections pertinentes à la question.
-Si tu ne connais pas un lien exact, indique "Rechercher : [terme exact]" plutôt qu'inventer.
 Tu es un outil d'aide décisionnelle uniquement, jamais un substitut au jugement clinique.`;
 
 export default async function handler(req, res) {
@@ -51,6 +57,7 @@ export default async function handler(req, res) {
         ],
         max_tokens: 2000,
         temperature: 0.3,
+        tools: [{ type: "web_search" }],
       }),
     });
 
