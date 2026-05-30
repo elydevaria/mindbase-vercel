@@ -2,33 +2,26 @@ export const config = { maxDuration: 30 };
 
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
 
-async function webSearch(query) {
+async function ddgSearch(query) {
   try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(url);
-    const data = await res.json();
+    const res = await fetch(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      { headers: { "User-Agent": "Mozilla/5.0" } }
+    );
+    const html = await res.text();
     const results = [];
-    if (data.AbstractText) results.push(`${data.AbstractText} (${data.AbstractURL})`);
-    if (data.RelatedTopics) {
-      data.RelatedTopics.slice(0, 5).forEach(t => {
-        if (t.Text && t.FirstURL) results.push(`${t.Text} - ${t.FirstURL}`);
-      });
-    }
-    return results.join("\n");
-  } catch (e) {
-    return "";
-  }
-}
-
-async function searchGoogle(query) {
-  try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query + " site:amazon.fr OR site:fnac.com OR site:has-sante.fr OR site:youtube.com OR site:pubmed.ncbi.nlm.nih.gov")}&format=json&no_html=1`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const results = [];
-    if (data.Results) data.Results.slice(0, 6).forEach(r => results.push(`${r.Text} - ${r.FirstURL}`));
-    if (data.RelatedTopics) data.RelatedTopics.slice(0, 5).forEach(t => { if (t.Text && t.FirstURL) results.push(`${t.Text} - ${t.FirstURL}`); });
-    return results.join("\n");
+    const linkRegex = /class="result__url"[^>]*>([^<]+)<\/a>/g;
+    const titleRegex = /class="result__a"[^>]*>([^<]+)<\/a>/g;
+    const snippetRegex = /class="result__snippet"[^>]*>([^<]+)<\/a>/g;
+    const titles = [...html.matchAll(/class="result__a" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)];
+    const snippets = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/span>/g)];
+    titles.slice(0, 8).forEach((m, i) => {
+      const url = m[1].startsWith("/") ? `https://duckduckgo.com${m[1]}` : m[1];
+      const title = m[2].replace(/<[^>]+>/g, "").trim();
+      const snippet = snippets[i] ? snippets[i][1].replace(/<[^>]+>/g, "").trim() : "";
+      results.push(`- ${title}\n  URL: ${url}\n  ${snippet}`);
+    });
+    return results.join("\n\n");
   } catch (e) {
     return "";
   }
@@ -36,11 +29,14 @@ async function searchGoogle(query) {
 
 const SYSTEM_PROMPT = `Tu es MindBase, un agent clinique expert en santé mentale dédié aux praticiens français.
 LANGUE : Réponds TOUJOURS en français.
-Tu recevras des résultats de recherche web réels dans chaque message — utilise-les pour fournir des liens réels et vérifiés.
-Ne fournis JAMAIS un lien que tu n'as pas vu dans les résultats de recherche fournis.
-Si un lien n'est pas dans les résultats, dis "Rechercher : [terme exact sur amazon.fr / fnac.com / etc.]"
 
-FORMAT — structure avec ces sections pertinentes :
+RÈGLE ABSOLUE SUR LES LIENS :
+- Tu recevras des résultats de recherche web réels dans chaque message
+- Utilise UNIQUEMENT les URLs présentes dans ces résultats de recherche
+- Ne génère JAMAIS une URL de toi-même
+- Si tu ne trouves pas un lien dans les résultats, écris exactement : "Rechercher sur [site] : [terme]"
+
+FORMAT — structure avec les sections pertinentes :
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
 ### 📸 Instagram
@@ -60,20 +56,35 @@ export default async function handler(req, res) {
 
   const lastMessage = messages[messages.length - 1].content;
 
-  // Search for real results
-  const [general, specific] = await Promise.all([
-    webSearch(lastMessage + " France santé mentale"),
-    searchGoogle(lastMessage + " France praticien"),
+  // Run multiple targeted searches in parallel
+  const [general, books, videos, official] = await Promise.all([
+    ddgSearch(`${lastMessage} santé mentale France praticien`),
+    ddgSearch(`${lastMessage} livre amazon.fr fnac`),
+    ddgSearch(`${lastMessage} youtube.com vidéo`),
+    ddgSearch(`${lastMessage} site:has-sante.fr OR site:ansm.sante.fr OR site:pubmed.ncbi.nlm.nih.gov`),
   ]);
 
-  const searchContext = [general, specific].filter(Boolean).join("\n");
+  const searchResults = `
+=== RÉSULTATS DE RECHERCHE RÉELS ===
+
+[Recherche générale]
+${general}
+
+[Livres Amazon/Fnac]
+${books}
+
+[Vidéos YouTube]
+${videos}
+
+[Sources officielles HAS/ANSM/PubMed]
+${official}
+
+=== FIN DES RÉSULTATS ===
+IMPORTANT: Utilise UNIQUEMENT les URLs ci-dessus. Ne génère aucune URL par toi-même.`;
 
   const augmentedMessages = [
     ...messages.slice(0, -1),
-    {
-      role: "user",
-      content: lastMessage + (searchContext ? `\n\n[RÉSULTATS DE RECHERCHE WEB RÉELS — utilise ces liens dans ta réponse]\n${searchContext}` : ""),
-    },
+    { role: "user", content: `${lastMessage}\n\n${searchResults}` },
   ];
 
   try {
