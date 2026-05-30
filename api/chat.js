@@ -2,26 +2,23 @@ export const config = { maxDuration: 30 };
 
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
 
-async function ddgSearch(query) {
+async function tavilySearch(query) {
   try {
-    const res = await fetch(
-      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
-    const html = await res.text();
-    const results = [];
-    const linkRegex = /class="result__url"[^>]*>([^<]+)<\/a>/g;
-    const titleRegex = /class="result__a"[^>]*>([^<]+)<\/a>/g;
-    const snippetRegex = /class="result__snippet"[^>]*>([^<]+)<\/a>/g;
-    const titles = [...html.matchAll(/class="result__a" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)];
-    const snippets = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/span>/g)];
-    titles.slice(0, 8).forEach((m, i) => {
-      const url = m[1].startsWith("/") ? `https://duckduckgo.com${m[1]}` : m[1];
-      const title = m[2].replace(/<[^>]+>/g, "").trim();
-      const snippet = snippets[i] ? snippets[i][1].replace(/<[^>]+>/g, "").trim() : "";
-      results.push(`- ${title}\n  URL: ${url}\n  ${snippet}`);
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: process.env.TAVILY_API_KEY,
+        query,
+        search_depth: "basic",
+        max_results: 6,
+        include_answer: false,
+      }),
     });
-    return results.join("\n\n");
+    const data = await res.json();
+    return (data.results || [])
+      .map(r => `- ${r.title}\n  URL: ${r.url}\n  ${r.content?.slice(0, 150) || ""}`)
+      .join("\n\n");
   } catch (e) {
     return "";
   }
@@ -30,13 +27,9 @@ async function ddgSearch(query) {
 const SYSTEM_PROMPT = `Tu es MindBase, un agent clinique expert en santé mentale dédié aux praticiens français.
 LANGUE : Réponds TOUJOURS en français.
 
-RÈGLE ABSOLUE SUR LES LIENS :
-- Tu recevras des résultats de recherche web réels dans chaque message
-- Utilise UNIQUEMENT les URLs présentes dans ces résultats de recherche
-- Ne génère JAMAIS une URL de toi-même
-- Si tu ne trouves pas un lien dans les résultats, écris exactement : "Rechercher sur [site] : [terme]"
+RÈGLE ABSOLUE : Tu recevras des résultats de recherche web réels. Utilise UNIQUEMENT les URLs présentes dans ces résultats. Ne génère JAMAIS une URL toi-même. Si tu ne trouves pas de lien réel, écris "Rechercher sur [site] : [terme exact]".
 
-FORMAT — structure avec les sections pertinentes :
+FORMAT — utilise les sections pertinentes :
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
 ### 📸 Instagram
@@ -46,7 +39,7 @@ FORMAT — structure avec les sections pertinentes :
 ### 📄 Recommandations officielles
 ### 📋 Protocoles
 
-Tu es un outil d'aide décisionnelle uniquement.`;
+Tu es un outil d'aide décisionnelle uniquement, jamais un substitut au jugement clinique.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -56,31 +49,25 @@ export default async function handler(req, res) {
 
   const lastMessage = messages[messages.length - 1].content;
 
-  // Run multiple targeted searches in parallel
-  const [general, books, videos, official] = await Promise.all([
-    ddgSearch(`${lastMessage} santé mentale France praticien`),
-    ddgSearch(`${lastMessage} livre amazon.fr fnac`),
-    ddgSearch(`${lastMessage} youtube.com vidéo`),
-    ddgSearch(`${lastMessage} site:has-sante.fr OR site:ansm.sante.fr OR site:pubmed.ncbi.nlm.nih.gov`),
+  // 3 targeted searches in parallel
+  const [general, books, official] = await Promise.all([
+    tavilySearch(`${lastMessage} santé mentale France praticien`),
+    tavilySearch(`${lastMessage} livre amazon.fr fnac youtube`),
+    tavilySearch(`${lastMessage} has-sante.fr ansm.sante.fr pubmed`),
   ]);
 
-  const searchResults = `
-=== RÉSULTATS DE RECHERCHE RÉELS ===
+  const searchResults = `=== RÉSULTATS DE RECHERCHE WEB RÉELS ===
 
-[Recherche générale]
-${general}
+[Général]
+${general || "Aucun résultat"}
 
-[Livres Amazon/Fnac]
-${books}
+[Livres & Vidéos]
+${books || "Aucun résultat"}
 
-[Vidéos YouTube]
-${videos}
+[Sources officielles]
+${official || "Aucun résultat"}
 
-[Sources officielles HAS/ANSM/PubMed]
-${official}
-
-=== FIN DES RÉSULTATS ===
-IMPORTANT: Utilise UNIQUEMENT les URLs ci-dessus. Ne génère aucune URL par toi-même.`;
+=== UTILISE UNIQUEMENT CES URLs — N'EN INVENTE AUCUNE ===`;
 
   const augmentedMessages = [
     ...messages.slice(0, -1),
