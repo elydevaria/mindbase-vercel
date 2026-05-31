@@ -50,7 +50,9 @@ function renderInline(text) {
   const cleaned = text
     .replace(/\[+🔗\s*\]\([^)]+\)/g, "")
     .replace(/\[+🔗\s*/g, "")
-    .replace(/\]+$/g, "");
+    .replace(/\]+$/g, "")
+    .replace(/^===\s*/g, "")   // strip leading ===
+    .replace(/\s*===$/g, "");  // strip trailing ===
   const parts = [];
   const re = /(\[([^\]]*)\]\((https?:\/\/[^\)]+)\))|(\*\*(.*?)\*\*)|(https?:\/\/[^\s\)\]>"]+)/g;
   let last = 0, m;
