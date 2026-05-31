@@ -419,17 +419,24 @@ export default function MindBase() {
         body:JSON.stringify({ userId, title, tags, note, content }),
       });
       const data = await res.json();
-      setLibrary(l=>[data.item, ...l]);
+      if (data.error) throw new Error(data.error);
+      // Reload from Supabase to ensure state matches database
+      await loadLibrary(userId);
       setSaveTarget(null);
       showToast("✓ Sauvegardé dans la bibliothèque");
-    } catch(e) { showToast("Erreur lors de la sauvegarde"); }
+    } catch(e) {
+      console.error("Save error:", e);
+      showToast("Erreur lors de la sauvegarde — réessayez");
+    }
   }
 
   async function deleteFromLibrary(id) {
     try {
       await fetch(`${API}/api/library?id=${id}`, { method:"DELETE" });
+      await loadLibrary(userId);
+    } catch(e) {
       setLibrary(l=>l.filter(i=>i.id!==id));
-    } catch(e) {}
+    }
   }
 
   async function sendMessage(text) {
@@ -499,7 +506,7 @@ export default function MindBase() {
           </div>
         </div>
 
-        <button onClick={()=>setShowLibrary(true)} style={{ margin:"12px 14px 0", padding:"10px 14px", background:library.length>0?"#eaf3ee":"#f5f3ee", border:"1px solid #a8cdb5", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>e.currentTarget.style.background="#d4ece0"} onMouseLeave={e=>e.currentTarget.style.background=library.length>0?"#eaf3ee":"#f5f3ee"}>
+        <button onClick={()=>{ loadLibrary(userId); setShowLibrary(true); }} style={{ margin:"12px 14px 0", padding:"10px 14px", background:library.length>0?"#eaf3ee":"#f5f3ee", border:"1px solid #a8cdb5", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>e.currentTarget.style.background="#d4ece0"} onMouseLeave={e=>e.currentTarget.style.background=library.length>0?"#eaf3ee":"#f5f3ee"}>
           <span style={{ fontSize:16 }}>📚</span>
           <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#2d5a3d" }}>Ma bibliothèque</div><div style={{ fontSize:10, color:"#6b9e7a" }}>{library.length} ressource{library.length!==1?"s":""}</div></div>
         </button>
