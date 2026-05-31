@@ -14,7 +14,6 @@ async function braveSearch(query, count = 4) {
       count: String(count),
       country: "fr",
       search_lang: "fr",
-      ui_lang: "fr-FR",
       safesearch: "moderate",
       text_decorations: "false",
     });
@@ -26,11 +25,9 @@ async function braveSearch(query, count = 4) {
       },
     });
     const data = await res.json();
-    const results = [];
-    (data.web?.results || []).slice(0, count).forEach(r => {
-      results.push(`Titre: ${r.title}\nURL: ${r.url}\nExtrait: ${r.description?.slice(0, 150) || ""}`);
-    });
-    return results.join("\n---\n");
+    return (data.web?.results || []).slice(0, count)
+      .map(r => `Titre: ${r.title}\nURL: ${r.url}\nExtrait: ${r.description?.slice(0, 150) || ""}`)
+      .join("\n---\n");
   } catch (e) { return ""; }
 }
 
@@ -57,7 +54,7 @@ async function braveVideoSearch(query, count = 4) {
   } catch (e) { return ""; }
 }
 
-// ─── Reddit OAuth2 if credentials exist, else Brave fallback ──────
+// ─── Reddit: OAuth if credentials exist, else Brave ───────────────
 async function getRedditToken() {
   const res = await fetch("https://www.reddit.com/api/v1/access_token", {
     method: "POST",
@@ -107,7 +104,6 @@ async function redditOAuthSearch(query) {
 
 async function redditSearch(queryFr, queryEn) {
   if (REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET) {
-    // OAuth — 0 Brave credits used
     const [fr, en] = await Promise.all([
       redditOAuthSearch(queryFr),
       redditOAuthSearch(queryEn),
@@ -117,25 +113,12 @@ async function redditSearch(queryFr, queryEn) {
       .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
       .join("\n---\n");
   } else {
-    // Brave fallback — counts as 1 credit (combined query)
-    return braveSearch(`site:reddit.com (${queryFr} OR ${queryEn})`, 5);
+    // Brave fallback — 1 credit
+    return braveSearch(`site:reddit.com ${queryFr} OR ${queryEn}`, 5);
   }
 }
 
-// ─── Detect query intent to skip irrelevant searches ─────────────
-function detectIntent(message) {
-  const m = message.toLowerCase();
-  return {
-    wantsBooks:     /livre|book|lire|manuel|fnac|amazon|acheter/.test(m),
-    wantsVideos:    /vid[eé]o|youtube|regarder|formation|cours/.test(m),
-    wantsSocial:    /reddit|instagram|facebook|linkedin|forum|communaut[eé]|r[eé]seau/.test(m),
-    wantsResearch:  /recherche|[eé]tude|pubmed|article|publication|inserm|preuve/.test(m),
-    wantsGuideline: /recommandation|has|ansm|guideline|protocole|officiel/.test(m),
-    wantsGeneral:   true, // always run general
-  };
-}
-
-// ─── Generate smart queries (1 Mistral call) ──────────────────────
+// ─── Generate smart queries ───────────────────────────────────────
 async function generateSearchQueries(userMessage) {
   try {
     const res = await fetch(MISTRAL_API, {
@@ -150,15 +133,18 @@ async function generateSearchQueries(userMessage) {
         temperature: 0.1,
         messages: [{
           role: "user",
-          content: `Expert en recherche web santé mentale française. Question : "${userMessage}"
+          content: `Expert recherche web santé mentale française. Question: "${userMessage}"
 
-Réponds UNIQUEMENT avec ce JSON (sans texte avant/après) :
+JSON uniquement, pas de texte avant/après:
 {
   "books": "requête livres France sur ce sujet",
   "videos": "requête YouTube français sur ce sujet",
   "reddit_fr": "2-3 mots français pour Reddit",
   "reddit_en": "2-3 mots anglais pour Reddit",
-  "social": "requête forums Instagram Facebook LinkedIn sur ce sujet France praticiens",
+  "instagram": "hashtags et termes pour Instagram sur ce sujet en français (ex: #TDAH psychologie praticien)",
+  "facebook": "nom de groupes Facebook ou termes pour ce sujet en France",
+  "linkedin": "termes professionnels LinkedIn santé mentale France sur ce sujet",
+  "forums": "termes pour forums médicaux professionnels français sur ce sujet",
   "official": "requête HAS ANSM OMS sur ce sujet",
   "research": "requête PubMed Inserm anglais sur ce sujet",
   "general": "requête générale praticiens français sur ce sujet"
@@ -176,84 +162,96 @@ Réponds UNIQUEMENT avec ce JSON (sans texte avant/après) :
     return {
       books: `${t} livre france`,
       videos: `${t} youtube français`,
-      reddit_fr: t,
-      reddit_en: t,
-      social: `${t} forum instagram facebook france praticien`,
-      official: `${t} HAS ANSM recommandations`,
-      research: `${t} treatment pubmed inserm`,
+      reddit_fr: t, reddit_en: t,
+      instagram: `${t} instagram praticien`,
+      facebook: `${t} groupe facebook france`,
+      linkedin: `${t} linkedin psychologue france`,
+      forums: `${t} forum professionnel france`,
+      official: `${t} HAS ANSM`,
+      research: `${t} treatment pubmed`,
       general: `${t} santé mentale france`,
     };
   }
 }
 
-// ─── System prompt ────────────────────────────────────────────────
 const SYSTEM_PROMPT = `Tu es MindBase, agent clinique expert en santé mentale pour praticiens français.
 LANGUE : Français uniquement.
 
-RÈGLES LIENS : URLs exactes des résultats uniquement. Ne génère jamais d'URL toi-même.
-Si section vide : "Rechercher manuellement : [terme exact]"
+RÈGLE ABSOLUE : Utilise UNIQUEMENT les URLs exactes des résultats fournis. Ne génère jamais d'URL toi-même.
+Si section vide : "Rechercher manuellement : [terme exact sur cette plateforme]"
 
-FORMAT — sections pertinentes uniquement :
+FORMAT — inclus toutes les sections qui ont des résultats :
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
-### 📸 Instagram & Facebook
+### 📸 Instagram
+### 👥 Facebook & LinkedIn
 ### 💬 Reddit & Forums
 ### 🔬 Recherches récentes
 ### 📄 Recommandations officielles
-### 📋 Protocoles
+### 📋 Protocoles (si pertinent)
 
-Par ressource : **titre**, description courte (1 phrase), URL.
-Sois concis par ressource — 2-3 lignes max chacune.
-Couvre toutes les sections disponibles sans exception.
+Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante.
+Sois concis — 3 lignes max par ressource. Couvre TOUTES les sections disponibles.
 Outil d'aide décisionnelle uniquement.`;
 
-// ─── Main handler ─────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const { messages } = req.body;
   if (!messages?.length) return res.status(400).json({ error: "No messages" });
 
   const lastMessage = messages[messages.length - 1].content;
-  const intent = detectIntent(lastMessage);
 
   try {
     const q = await generateSearchQueries(lastMessage);
 
-    // ── Smart search — only run what's needed ──────────────────
-    // Max 5 Brave API calls per request (down from 9)
-    // Reddit uses its own API when credentials exist (0 Brave credits)
-    const searchPromises = {
-      // Always run: general + official + research (3 calls)
-      general:  braveSearch(q.general),
-      official: braveSearch(`${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int OR site:pubmed.ncbi.nlm.nih.gov OR site:inserm.fr`),
-      research: braveSearch(`${q.research} site:pubmed.ncbi.nlm.nih.gov OR site:inserm.fr OR site:psyarxiv.com`),
-      // Conditional: books (1 call) — skip if clearly not a book query
-      ...(intent.wantsBooks || !intent.wantsVideos && !intent.wantsSocial
-        ? { books: braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`) }
-        : {}),
-      // Conditional: videos (1 video API call) — skip if clearly not a video query  
-      ...(intent.wantsVideos || !intent.wantsBooks && !intent.wantsSocial
-        ? { videos: braveVideoSearch(q.videos) }
-        : {}),
-      // Social: combined into 1 Brave call (Instagram + Facebook + LinkedIn + forums)
-      social: braveSearch(`(${q.social}) (site:instagram.com OR site:facebook.com OR site:linkedin.com OR forum OR discussion)`, 6),
-      // Reddit: uses own API if credentials exist (free), else 1 Brave call
-      reddit: redditSearch(q.reddit_fr, q.reddit_en),
-    };
+    // ── 7 Brave calls max (Reddit free via OAuth when credentials set) ──
+    // Grouped smartly to maximise result quality per credit:
+    // 1. Books (bookstore domains only)
+    // 2. Videos (video API — separate endpoint, same credit pool)
+    // 3. Reddit (free via OAuth, or 1 Brave credit fallback)
+    // 4. Instagram (site: search — Brave crawls public IG posts well)
+    // 5. Facebook + LinkedIn + Forums (combined — similar professional content)
+    // 6. Official guidelines + PubMed combined
+    // 7. General broad search
+    const [
+      books, videos, reddit,
+      instagram, socialForums,
+      officialResearch, general,
+    ] = await Promise.all([
+      // 1 credit — bookstores only
+      braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`),
+      // 1 video credit — YouTube
+      braveVideoSearch(q.videos),
+      // 0 credits if OAuth, else 1 credit
+      redditSearch(q.reddit_fr, q.reddit_en),
+      // 1 credit — Instagram only, dedicated search
+      // Key insight: use hashtag-style terms + "instagram.com" for better results
+      braveSearch(`site:instagram.com ${q.instagram}`, 5),
+      // 1 credit — Facebook + LinkedIn + professional forums combined
+      // These return similar professional content so combining works well
+      braveSearch(`(${q.facebook} site:facebook.com) OR (${q.linkedin} site:linkedin.com) OR (${q.forums} forum professionnel psychologie)`, 6),
+      // 1 credit — official sources + research combined
+      braveSearch(`(${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int) OR (${q.research} site:pubmed.ncbi.nlm.nih.gov OR site:inserm.fr OR site:psyarxiv.com)`, 6),
+      // 1 credit — general
+      braveSearch(q.general, 5),
+    ]);
 
-    const keys = Object.keys(searchPromises);
-    const values = await Promise.all(Object.values(searchPromises));
-    const results = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
+    // Split socialForums results by domain for cleaner display
+    const socialItems = socialForums ? socialForums.split("\n---\n") : [];
+    const facebookItems = socialItems.filter(r => r.includes("facebook.com")).join("\n---\n");
+    const linkedinItems = socialItems.filter(r => r.includes("linkedin.com")).join("\n---\n");
+    const forumItems = socialItems.filter(r => !r.includes("facebook.com") && !r.includes("linkedin.com")).join("\n---\n");
 
-    // ── Build context ──────────────────────────────────────────
+    const fbLinkedinForums = [facebookItems, linkedinItems, forumItems].filter(Boolean).join("\n---\n");
+
     const sections = [
-      results.books   && `[LIVRES]\n${results.books}`,
-      results.videos  && `[VIDÉOS YOUTUBE]\n${results.videos}`,
-      results.reddit  && `[REDDIT]\n${results.reddit}`,
-      results.social  && `[INSTAGRAM / FACEBOOK / LINKEDIN / FORUMS]\n${results.social}`,
-      results.official && `[RECOMMANDATIONS OFFICIELLES + RECHERCHES]\n${results.official}`,
-      results.research && `[PUBMED / INSERM]\n${results.research}`,
-      results.general && `[GÉNÉRAL]\n${results.general}`,
+      books              && `[LIVRES]\n${books}`,
+      videos             && `[VIDÉOS YOUTUBE]\n${videos}`,
+      reddit             && `[REDDIT]\n${reddit}`,
+      instagram          && `[INSTAGRAM]\n${instagram}`,
+      fbLinkedinForums   && `[FACEBOOK / LINKEDIN / FORUMS]\n${fbLinkedinForums}`,
+      officialResearch   && `[RECOMMANDATIONS OFFICIELLES & RECHERCHES]\n${officialResearch}`,
+      general            && `[GÉNÉRAL]\n${general}`,
     ].filter(Boolean);
 
     const augmentedMessages = [
@@ -266,7 +264,7 @@ export default async function handler(req, res) {
 ${sections.join("\n\n===\n\n") || "Aucun résultat."}
 === FIN ===
 
-Utilise UNIQUEMENT ces URLs. Couvre toutes les sections. Sois concis par ressource.`,
+RAPPEL : URLs exactes uniquement. Couvre toutes les sections. 3 lignes max par ressource.`,
       },
     ];
 
@@ -282,7 +280,7 @@ Utilise UNIQUEMENT ces URLs. Couvre toutes les sections. Sois concis par ressour
           { role: "system", content: SYSTEM_PROMPT },
           ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 4000,  // increased from 3000 to prevent cutoffs
+        max_tokens: 4000,
         temperature: 0.2,
       }),
     });
