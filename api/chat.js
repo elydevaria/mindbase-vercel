@@ -11,17 +11,29 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function supaFetch(path, method = "GET", body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method,
-    headers: {
+  try {
+    const headers = {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
       "Content-Type": "application/json",
-      "Prefer": method === "POST" ? "return=representation" : method === "PATCH" ? "return=representation" : "",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return res.json();
+    };
+    if (method === "POST") headers["Prefer"] = "return=representation";
+    if (method === "PATCH") headers["Prefer"] = "return=representation";
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const text = await res.text();
+    process.stdout.write(`SUPA ${method} ${path.slice(0,40)} → ${res.status}\n`);
+    if (!text) return null;
+    return JSON.parse(text);
+  } catch (e) {
+    process.stdout.write("SUPA ERROR: " + e.message + "\n");
+    return null;
+  }
 }
 
 // Normalize question to a consistent hash key
@@ -416,6 +428,10 @@ export default async function handler(req, res) {
   const lastMessage = messages[messages.length - 1].content;
 
   try {
+    // ── Step 0: Verify Supabase connection ───────────────────────
+    process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
+    process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
+
     // ── Step 1: Check database first ──────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
@@ -519,8 +535,12 @@ RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5
 
     const reply = data.choices?.[0]?.message?.content || "Aucun résultat.";
 
-    // ── Step 3: Store result in database (async, don't block response) ──
-    storeInDatabase(lastMessage, reply, intentSections, staleId).catch(() => {});
+    // ── Step 3: Store result in database ────────────────────────
+    try {
+      await storeInDatabase(lastMessage, reply, intentSections, staleId);
+    } catch (e) {
+      process.stdout.write("STORE FAILED: " + e.message + "\n");
+    }
 
     res.json({ reply });
 
