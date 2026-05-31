@@ -6,6 +6,110 @@ const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID;
 const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET;
 const REDDIT_USER_AGENT = "MindBase/1.0 (mental health practitioner tool)";
 
+// ─── Supabase helpers ─────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
+
+async function supaFetch(path, method = "GET", body) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method,
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": method === "POST" ? "return=representation" : method === "PATCH" ? "return=representation" : "",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+// Normalize question to a consistent hash key
+// "Protocoles TCC pour l'anxiété ?" → "protocoles tcc pour l anxiete"
+function normalizeQuery(q) {
+  return q
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove accents
+    .replace(/[^a-z0-9 ]/g, " ")                        // remove punctuation
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+// ─── Database lookup ──────────────────────────────────────────────
+// Checks if we have a stored result for this query
+// Returns: { result, sections, fromDb: true } or null
+async function getFromDatabase(question) {
+  try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+    const hash = normalizeQuery(question);
+    const data = await supaFetch(
+      `query_database?query_hash=eq.${encodeURIComponent(hash)}&limit=1&select=id,result,sections,hit_count,last_searched`
+    );
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    const entry = data[0];
+
+    // Check freshness — stable content (protocols, books) valid 7 days
+    // Dynamic content (forums, reddit) valid 1 day
+    const ageHours = (Date.now() - new Date(entry.last_searched).getTime()) / 3600000;
+    const sections = entry.sections || [];
+    const hasDynamicSections = sections.some(s => ["reddit","forums","instagram"].includes(s));
+    const maxAge = hasDynamicSections ? 24 : 168; // 1 day or 7 days
+
+    if (ageHours > maxAge) {
+      // Entry is stale — will refresh but keep the id for update
+      return { stale: true, id: entry.id, sections };
+    }
+
+    // Increment hit count asynchronously (don't wait)
+    supaFetch(
+      `query_database?id=eq.${entry.id}`,
+      "PATCH",
+      { hit_count: entry.hit_count + 1 }
+    ).catch(() => {});
+
+    process.stdout.write(`DB HIT: ${hash.slice(0, 50)} (${entry.hit_count} hits, ${Math.round(ageHours)}h old)\n`);
+    return { result: entry.result, sections, fromDb: true };
+  } catch (e) {
+    process.stdout.write("DB LOOKUP ERROR: " + e.message + "\n");
+    return null;
+  }
+}
+
+// ─── Database store ───────────────────────────────────────────────
+async function storeInDatabase(question, result, sections, existingId = null) {
+  try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return;
+    const hash = normalizeQuery(question);
+    const now = new Date().toISOString();
+
+    if (existingId) {
+      // Update stale entry
+      await supaFetch(`query_database?id=eq.${existingId}`, "PATCH", {
+        result,
+        sections,
+        last_searched: now,
+      });
+      process.stdout.write(`DB UPDATED: ${hash.slice(0, 50)}\n`);
+    } else {
+      // Insert new entry
+      await supaFetch("query_database", "POST", {
+        query_hash: hash,
+        question,
+        result,
+        sections,
+        last_searched: now,
+      });
+      process.stdout.write(`DB STORED: ${hash.slice(0, 50)}\n`);
+    }
+  } catch (e) {
+    process.stdout.write("DB STORE ERROR: " + e.message + "\n");
+  }
+}
+
+
+
 // ─── Brave Web Search ─────────────────────────────────────────────
 async function braveSearch(query, count = 5) {
   try {
@@ -312,7 +416,14 @@ export default async function handler(req, res) {
   const lastMessage = messages[messages.length - 1].content;
 
   try {
-    // ── Single Mistral call: intent + queries ────────────────────
+    // ── Step 1: Check database first ──────────────────────────────
+    const dbResult = await getFromDatabase(lastMessage);
+    if (dbResult && !dbResult.stale && dbResult.fromDb) {
+      return res.json({ reply: dbResult.result, source: "database" });
+    }
+    const staleId = dbResult?.stale ? dbResult.id : null;
+
+    // ── Step 2: Intent detection + query generation ───────────────
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
@@ -407,6 +518,10 @@ RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5
     if (data.error) return res.status(500).json({ error: data.error.message });
 
     const reply = data.choices?.[0]?.message?.content || "Aucun résultat.";
+
+    // ── Step 3: Store result in database (async, don't block response) ──
+    storeInDatabase(lastMessage, reply, intentSections, staleId).catch(() => {});
+
     res.json({ reply });
 
   } catch (err) {
