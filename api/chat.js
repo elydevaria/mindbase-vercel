@@ -165,8 +165,9 @@ async function redditSearch(queryFr, queryEn) {
   }
 }
 
-// ─── Generate smart queries ───────────────────────────────────────
-async function generateSearchQueries(userMessage) {
+// ─── Combined: intent detection + query generation (single Mistral call) ────
+async function generateQueriesAndIntent(userMessage) {
+  const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
   try {
     const res = await fetch(MISTRAL_API, {
       method: "POST",
@@ -180,52 +181,95 @@ async function generateSearchQueries(userMessage) {
         temperature: 0.1,
         messages: [{
           role: "user",
-          content: `Tu es expert en recherche web pour des praticiens de santé mentale français.
+          content: `Tu es expert en recherche web pour praticiens de santé mentale français.
 
-Question : "${userMessage}"
+Question: "${userMessage}"
 
-Génère des requêtes optimisées. Règles importantes :
-- Termes médicaux français corrects (TDAH, dépression, anxiété, TSPT, TCA, TOC, etc.)
-- Pour Reddit : termes courts et directs (2-3 mots max)
-- Pour PubMed : anglais médical précis avec termes MeSH si possible
-- Pour Instagram : requête naturelle pour trouver des COMPTES POPULAIRES francophones sur ce sujet (praticiens, associations, pages de sensibilisation)
-- Pour forums : pense aux forums médicaux français (Doctissimo, Psychologies, forums professionnels de psychiatrie/psychologie)
-
-Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
+Réponds UNIQUEMENT avec ce JSON exact (pas de texte avant ni après):
 {
-  "books": "requête pour livres sur ce sujet disponibles en France",
-  "videos": "requête courte pour vidéos YouTube français sur ce sujet",
-  "reddit_fr": "terme médical français court pour Reddit (2-3 mots)",
-  "reddit_en": "terme médical anglais court pour Reddit (2-3 mots)",
-  "forums": "requête courte et directe pour trouver des discussions et forums français sur ce sujet — utilise le terme médical principal + mots comme forum, discussion, communauté, association (ex: TDAH adulte forum OR association OR discussion)",
-  "instagram": "terme médical principal en français pour trouver des comptes Instagram sur ce sujet — terme court et simple, juste le sujet médical (ex: TDAH, dépression, anxiété, autisme) sans rôle professionnel",
-  "facebook": "requête pour groupes Facebook francophones sur ce sujet",
-  "linkedin": "terme médical principal en français pour trouver des profils LinkedIn de praticiens sur ce sujet — terme court et simple comme le sujet médical (ex: TDAH, dépression, anxiété)",
-  "recommendations": "requête bilingue pour recommandations ET protocoles — termes FR ET EN avec OR pour couvrir HAS + NICE + Cochrane + APA",
-  "pubmed_cited": "requête PubMed anglais avec termes MeSH pour méta-analyses et systematic reviews (ex: 'ADHD[MeSH] meta-analysis systematic review')",
-  "pubmed_recent": "requête PubMed anglais pour RCTs et études cliniques récentes 2022-2025",
-}`
+  "sections": ["liste des sections pertinentes parmi: protocols, pubmed, books, videos, instagram, facebook, linkedin, reddit, forums"],
+  "books": "requête livres France",
+  "videos": "requête YouTube français",
+  "reddit_fr": "2-3 mots français pour Reddit",
+  "reddit_en": "2-3 mots anglais pour Reddit",
+  "instagram": "terme court pour comptes Instagram francophones",
+  "facebook": "termes groupes Facebook francophones",
+  "linkedin": "terme court pour profils LinkedIn praticiens",
+  "forums": "termes forums médicaux professionnels français",
+  "recommendations": "requête bilingue HAS ANSM NICE Cochrane APA",
+  "pubmed_cited": "requête PubMed MeSH pour études citées",
+  "pubmed_recent": "requête PubMed études récentes 2022-2025"
+}
+
+Règles pour "sections" :
+- Question sur protocoles/traitements/thérapies → inclure ["protocols","pubmed"] au minimum
+- Question sur livres → ["books"]
+- Question sur Instagram → ["instagram"]
+- Question sur réseaux sociaux → ["instagram","facebook","linkedin","reddit"]
+- Question sur communautés/forums → ["reddit","forums","facebook"]
+- Question sur recherches/études → ["pubmed"]
+- Question générale ou "ressources complètes" → toutes les sections
+- Analyse intelligemment selon le contexte clinique`
         }]
       }),
     });
+
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content || "";
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error("no json");
-    return JSON.parse(m[0]);
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("no json");
+    const parsed = JSON.parse(match[0]);
+
+    // Fuzzy validate sections — map close matches to canonical names
+    const SECTION_MAP = {
+      "protocols": "protocols", "protocol": "protocols", "recommandations": "protocols",
+      "recommendation": "protocols", "guidelines": "protocols", "guideline": "protocols",
+      "pubmed": "pubmed", "research": "pubmed", "recherche": "pubmed", "studies": "pubmed",
+      "books": "books", "book": "books", "livres": "books", "livre": "books",
+      "videos": "videos", "video": "videos", "youtube": "videos", "vidéos": "videos",
+      "instagram": "instagram", "ig": "instagram",
+      "facebook": "facebook", "fb": "facebook",
+      "linkedin": "linkedin",
+      "reddit": "reddit",
+      "forums": "forums", "forum": "forums", "discussions": "forums",
+    };
+    const rawSections = parsed.sections || [];
+    const sections = [...new Set(
+      rawSections.map(s => SECTION_MAP[s.toLowerCase()] || (ALL_SECTIONS.includes(s) ? s : null))
+        .filter(Boolean)
+    )];
+    process.stdout.write("INTENT RAW: " + JSON.stringify(rawSections) + " → MAPPED: " + JSON.stringify(sections) + "\n");
+
+    return { queries: parsed, sections };
   } catch (e) {
+    process.stdout.write("INTENT ERROR: " + e.message + "\n");
+    // Keyword fallback — better than showing everything
+    const m = userMessage.toLowerCase();
     const t = userMessage.slice(0, 40);
+    let fallbackSections = [];
+    if (/protocole|guideline|recommandation|traitement|th[eé]rapie|prise en charge/.test(m)) fallbackSections = ["protocols","pubmed"];
+    else if (/livre|book|manuel|fnac|amazon/.test(m)) fallbackSections = ["books"];
+    else if (/instagram|ig/.test(m)) fallbackSections = ["instagram"];
+    else if (/youtube|vid[eé]o/.test(m)) fallbackSections = ["videos"];
+    else if (/forum|discussion|communaut[eé]/.test(m)) fallbackSections = ["reddit","forums","facebook"];
+    else if (/r[eé]seau|social/.test(m)) fallbackSections = ["instagram","facebook","linkedin","reddit"];
+    else if (/recherche|[eé]tude|pubmed|article/.test(m)) fallbackSections = ["pubmed"];
+    else if (/linkedin/.test(m)) fallbackSections = ["linkedin"];
+    // If still empty → run all (truly general query)
     return {
-      books: `${t} livre amazon fnac france`,
-      videos: `${t} youtube français`,
-      reddit_fr: t, reddit_en: t,
-      forums: `${t} forum discussion association france`,
-      instagram: t,
-      facebook: `${t} groupe facebook france`,
-      linkedin: t,
-      recommendations: `${t} recommandations HAS OR guidelines NICE OR Cochrane review`,
-      pubmed_cited: `${t} meta-analysis systematic review`,
-      pubmed_recent: `${t} randomized controlled trial 2023 2024`,
+      sections: fallbackSections,
+      queries: {
+        books: t + " livre france",
+        videos: t + " youtube français",
+        reddit_fr: t, reddit_en: t,
+        instagram: t + " praticien",
+        facebook: t + " groupe france",
+        linkedin: t + " praticien",
+        forums: t + " forum france",
+        recommendations: t + " recommandations HAS OR guidelines NICE",
+        pubmed_cited: t + " meta-analysis systematic review",
+        pubmed_recent: t + " treatment 2023 2024",
+      }
     };
   }
 }
@@ -233,10 +277,14 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
 const SYSTEM_PROMPT = `Tu es MindBase, agent clinique expert en santé mentale pour praticiens français.
 LANGUE : Français uniquement.
 
-RÈGLE ABSOLUE : Utilise UNIQUEMENT les URLs exactes des résultats fournis. Ne génère jamais d'URL.
-Si section vide : "Rechercher manuellement : [terme exact]"
+RÈGLES ABSOLUES :
+1. Utilise UNIQUEMENT les URLs exactes des résultats fournis entre les marqueurs === ===
+2. N'affiche UNE SECTION que si elle contient des résultats réels dans les données fournies
+3. Si une section n'a AUCUN résultat dans les données → NE L'AFFICHE PAS DU TOUT, même pas le titre
+4. Ne génère JAMAIS une URL de toi-même
+5. Ne complète JAMAIS avec tes propres connaissances si les données sont vides pour une section
 
-FORMAT — dans cet ordre, sections pertinentes uniquement :
+FORMAT — dans cet ordre, UNIQUEMENT si la section a des données réelles :
 ### 🔬 Articles les plus cités (minimum 5)
 ### 🔬 Recherches récentes (2022-2025)
 ### 📄 Recommandations & Protocoles
@@ -249,12 +297,12 @@ FORMAT — dans cet ordre, sections pertinentes uniquement :
 ### 💬 Forums professionnels
 
 Pour Articles les plus cités : affiche MINIMUM 5 articles tagués [Très cité], [Récent] ou [Cité + Récent].
-Pour LinkedIn KOL : indique pourquoi ils sont influents (auteur de X, présent dans médias, etc.).
-Pour Instagram : affiche EXACTEMENT le titre tel qu'il apparaît dans les résultats (ex: "Alice ♡ La Mini Coach TDAH") ET le handle (@username) sur la même ligne, puis la description et l'URL. Ne raccourcis jamais le nom du compte.
+Pour Instagram : affiche EXACTEMENT le titre tel qu'il apparaît dans les résultats ET le handle (@username). Ne raccourcis jamais le nom du compte.
 Pour LinkedIn : affiche le nom complet, titre et institution de la personne.
 Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français.
 Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max.
-Couvre TOUTES les sections disponibles. Outil d'aide décisionnelle uniquement.`;
+Si seulement 1-2 sections ont des résultats, affiche-les en détail complet sans limite de lignes.
+Outil d'aide décisionnelle uniquement.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -264,46 +312,9 @@ export default async function handler(req, res) {
   const lastMessage = messages[messages.length - 1].content;
 
   try {
-    const q = await generateSearchQueries(lastMessage);
-
-    // ── Mistral decides which sections to search ─────────────────
-    let intentSections = [];
-    try {
-      const intentRes = await fetch(MISTRAL_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "mistral-small-latest",
-          max_tokens: 80,
-          temperature: 0,
-          messages: [{
-            role: "system",
-            content: `Tu es un assistant pour praticiens en santé mentale français.
-Les sections disponibles sont : protocols, pubmed, books, videos, instagram, facebook, linkedin, reddit, forums.
-Décide quelles sections sont pertinentes pour la question posée.
-Réponds UNIQUEMENT avec un tableau JSON. Exemples :
-- Question générale ou "ressources complètes" → toutes les sections
-- Question sur livres → ["books"]
-- Question sur Instagram → ["instagram"]
-- Question clinique sur un trouble/traitement → au minimum ["protocols", "pubmed"]
-- Question sur communautés → ["reddit", "forums", "facebook"]`
-          }, {
-            role: "user",
-            content: lastMessage
-          }]
-        }),
-      });
-      const intentData = await intentRes.json();
-      const intentText = intentData.choices?.[0]?.message?.content || "[]";
-      const jsonMatch = intentText.match(/\[[\s\S]*\]/);
-      if (jsonMatch) intentSections = JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      intentSections = [];
-    }
-
+    // ── Single Mistral call: intent + queries ────────────────────
+    const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
+    const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
