@@ -1,8 +1,8 @@
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 45 };
 
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
 
-async function tavilySearch(query) {
+async function search(query) {
   try {
     const res = await fetch("https://api.tavily.com/search", {
       method: "POST",
@@ -10,15 +10,17 @@ async function tavilySearch(query) {
       body: JSON.stringify({
         api_key: process.env.TAVILY_API_KEY,
         query,
-        search_depth: "basic",
-        max_results: 6,
-        include_answer: false,
+        search_depth: "advanced",
+        max_results: 5,
+        include_domains: [],
+        exclude_domains: ["pinterest.com", "slideshare.net", "scribd.com"],
       }),
     });
     const data = await res.json();
     return (data.results || [])
-      .map(r => `- ${r.title}\n  URL: ${r.url}\n  ${r.content?.slice(0, 150) || ""}`)
-      .join("\n\n");
+      .filter(r => r.url && r.title)
+      .map(r => `Titre: ${r.title}\nURL: ${r.url}\nExtrait: ${r.content?.slice(0, 200) || ""}`)
+      .join("\n---\n");
   } catch (e) {
     return "";
   }
@@ -27,19 +29,23 @@ async function tavilySearch(query) {
 const SYSTEM_PROMPT = `Tu es MindBase, un agent clinique expert en santé mentale dédié aux praticiens français.
 LANGUE : Réponds TOUJOURS en français.
 
-RÈGLE ABSOLUE : Tu recevras des résultats de recherche web réels. Utilise UNIQUEMENT les URLs présentes dans ces résultats. Ne génère JAMAIS une URL toi-même. Si tu ne trouves pas de lien réel, écris "Rechercher sur [site] : [terme exact]".
+RÈGLE ABSOLUE SUR LES LIENS :
+- Utilise UNIQUEMENT les URLs exactes présentes dans les résultats de recherche fournis
+- Copie les URLs mot pour mot — ne les modifie JAMAIS
+- Si une URL n'est pas dans les résultats, écris "Rechercher : [terme exact]" — ne génère RIEN
+- Vérifie que chaque URL que tu cites est bien dans les résultats avant de la mentionner
 
-FORMAT — utilise les sections pertinentes :
+FORMAT — utilise uniquement les sections pertinentes :
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
-### 📸 Instagram
-### 👥 Facebook
+### 📸 Instagram & Facebook
 ### 💬 Reddit & Forums
 ### 🔬 Recherches récentes
 ### 📄 Recommandations officielles
 ### 📋 Protocoles
 
-Tu es un outil d'aide décisionnelle uniquement, jamais un substitut au jugement clinique.`;
+Pour chaque ressource : titre en gras, description courte, puis l'URL exacte des résultats.
+Tu es un outil d'aide décisionnelle uniquement.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -49,29 +55,53 @@ export default async function handler(req, res) {
 
   const lastMessage = messages[messages.length - 1].content;
 
-  // 3 targeted searches in parallel
-  const [general, books, official] = await Promise.all([
-    tavilySearch(`${lastMessage} santé mentale France praticien`),
-    tavilySearch(`${lastMessage} livre amazon.fr fnac youtube`),
-    tavilySearch(`${lastMessage} has-sante.fr ansm.sante.fr pubmed`),
-  ]);
+  // Detect what kind of query it is to target searches better
+  const isBooks = /livre|book|manuel|ouvrage|lire|fnac|amazon/i.test(lastMessage);
+  const isVideo = /vid[eé]o|youtube|regarder|formation/i.test(lastMessage);
+  const isResearch = /recherche|[eé]tude|pubmed|article|publication|preuve/i.test(lastMessage);
+  const isGuideline = /recommandation|has|ansm|guideline|protocole|officiel/i.test(lastMessage);
+  const isSocial = /instagram|facebook|reddit|communaut[eé]|forum|linkedin/i.test(lastMessage);
 
-  const searchResults = `=== RÉSULTATS DE RECHERCHE WEB RÉELS ===
+  // Always run general + 2-3 targeted searches based on query type
+  const searches = [
+    search(`${lastMessage} France praticien psychologue psychiatre`),
+  ];
 
-[Général]
-${general || "Aucun résultat"}
+  if (isBooks || !isVideo && !isResearch && !isGuideline && !isSocial) {
+    searches.push(search(`${lastMessage} livre amazon.fr`));
+    searches.push(search(`${lastMessage} livre fnac.com`));
+  }
+  if (isVideo || (!isBooks && !isResearch && !isGuideline && !isSocial)) {
+    searches.push(search(`${lastMessage} youtube.com français`));
+  }
+  if (isResearch || (!isBooks && !isVideo && !isGuideline && !isSocial)) {
+    searches.push(search(`${lastMessage} pubmed.ncbi.nlm.nih.gov`));
+    searches.push(search(`${lastMessage} inserm.fr`));
+  }
+  if (isGuideline || (!isBooks && !isVideo && !isResearch && !isSocial)) {
+    searches.push(search(`${lastMessage} has-sante.fr recommandations`));
+    searches.push(search(`${lastMessage} ansm.sante.fr`));
+  }
+  if (isSocial || (!isBooks && !isVideo && !isResearch && !isGuideline)) {
+    searches.push(search(`${lastMessage} reddit.com france`));
+    searches.push(search(`${lastMessage} instagram facebook groupe france`));
+  }
 
-[Livres & Vidéos]
-${books || "Aucun résultat"}
-
-[Sources officielles]
-${official || "Aucun résultat"}
-
-=== UTILISE UNIQUEMENT CES URLs — N'EN INVENTE AUCUNE ===`;
+  const results = await Promise.all(searches);
+  const searchContext = results.filter(Boolean).join("\n\n===\n\n");
 
   const augmentedMessages = [
     ...messages.slice(0, -1),
-    { role: "user", content: `${lastMessage}\n\n${searchResults}` },
+    {
+      role: "user",
+      content: `${lastMessage}
+
+=== RÉSULTATS DE RECHERCHE WEB EN TEMPS RÉEL ===
+${searchContext || "Aucun résultat trouvé"}
+=== FIN DES RÉSULTATS ===
+
+RAPPEL : Utilise UNIQUEMENT les URLs ci-dessus, copiées exactement. N'en invente aucune.`,
+    },
   ];
 
   try {
@@ -88,7 +118,7 @@ ${official || "Aucun résultat"}
           ...augmentedMessages.slice(-14),
         ],
         max_tokens: 2000,
-        temperature: 0.3,
+        temperature: 0.2,
       }),
     });
 
