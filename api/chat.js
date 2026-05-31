@@ -54,6 +54,54 @@ async function braveVideoSearch(query, count = 4) {
   } catch (e) { return ""; }
 }
 
+// ─── PubMed API — free, no key needed ────────────────────────────
+// Searches both most-cited (via sort=relevance which PubMed weights by citations)
+// and most-recent separately, then merges and deduplicates
+async function pubmedSearch(query) {
+  try {
+    const encoded = encodeURIComponent(query);
+    const base = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils`;
+
+    // Run two searches: most relevant (citation-weighted) + most recent
+    const [relevantRes, recentRes] = await Promise.all([
+      fetch(`${base}/esearch.fcgi?db=pubmed&term=${encoded}&retmax=5&sort=relevance&retmode=json`),
+      fetch(`${base}/esearch.fcgi?db=pubmed&term=${encoded}&retmax=4&sort=pub+date&retmode=json&datetype=pdat&reldate=730`),
+    ]);
+
+    const [relevantData, recentData] = await Promise.all([
+      relevantRes.json(),
+      recentRes.json(),
+    ]);
+
+    // Merge IDs, deduplicate, keep max 7
+    const relevantIds = relevantData?.esearchresult?.idlist || [];
+    const recentIds = recentData?.esearchresult?.idlist || [];
+    const allIds = [...new Set([...relevantIds, ...recentIds])].slice(0, 7);
+
+    if (!allIds.length) return "";
+
+    // Fetch summaries for all IDs
+    const summaryRes = await fetch(
+      `${base}/esummary.fcgi?db=pubmed&id=${allIds.join(",")}&retmode=json`
+    );
+    const summaryData = await summaryRes.json();
+    const uids = summaryData?.result?.uids || [];
+
+    return uids.map(id => {
+      const paper = summaryData.result[id];
+      if (!paper) return null;
+      const authors = (paper.authors || []).slice(0, 3).map(a => a.name).join(", ");
+      const year = paper.pubdate?.slice(0, 4) || "";
+      const journal = paper.fulljournalname || paper.source || "";
+      const isCited = relevantIds.includes(id);
+      const isRecent = recentIds.includes(id);
+      const tag = isCited && isRecent ? "[Cité + Récent]" : isCited ? "[Très cité]" : "[Récent 2023-2024]";
+      return `Titre: ${tag} ${paper.title}\nURL: https://pubmed.ncbi.nlm.nih.gov/${id}/\nExtrait: ${authors}${year ? ` (${year})` : ""} — ${journal}`;
+    }).filter(Boolean).join("\n---\n");
+
+  } catch (e) { return ""; }
+}
+
 // ─── Reddit OAuth or Brave fallback ───────────────────────────────
 async function getRedditToken() {
   const res = await fetch("https://www.reddit.com/api/v1/access_token", {
@@ -128,7 +176,7 @@ async function generateSearchQueries(userMessage) {
       },
       body: JSON.stringify({
         model: "mistral-small-latest",
-        max_tokens: 500,
+        max_tokens: 600,
         temperature: 0.1,
         messages: [{
           role: "user",
@@ -140,13 +188,15 @@ JSON uniquement, pas de texte avant/après:
   "videos": "requête YouTube français sur ce sujet",
   "reddit_fr": "2-3 mots français pour Reddit",
   "reddit_en": "2-3 mots anglais pour Reddit",
-  "instagram": "termes et hashtags Instagram français sur ce sujet (ex: TDAH psychologie praticien)",
-  "facebook": "nom groupes ou termes Facebook francophones sur ce sujet",
-  "linkedin_voices": "nom complet de psychiatres psychologues influents en France sur ce sujet à chercher sur LinkedIn (ex: Dr. Marie Martin psychiatre TDAH)",
+  "instagram": "termes et hashtags Instagram français sur ce sujet",
+  "facebook": "noms groupes ou termes Facebook francophones sur ce sujet",
+  "linkedin_kol": "noms de KEY OPINION LEADERS reconnus mondialement sur ce sujet en psychiatrie psychologie — cherche des professeurs, chefs de service, auteurs de guidelines, conférenciers internationaux (ex: Pr. Philip Asherson TDAH, Pr. Franck Bellivier psychiatrie France)",
   "linkedin_articles": "termes pour articles LinkedIn professionnels sur ce sujet santé mentale France",
-  "forums": "termes pour forums médicaux professionnels FRANÇAIS spécifiques sur ce sujet — pense à: forum.doctissimo.fr, psychologies.com, forum-psychiatrie.fr, forum.aufeminin.com, association-patients.fr, psycom.org, santepsychique.fr, forum-tdah.fr, etc.",
+  "forums": "termes pour forums médicaux professionnels FRANÇAIS sur ce sujet — doctissimo.fr, psychologies.com, psycom.org, forum-psychiatrie.fr, forum-tdah.fr, etc.",
+  "protocols": "requête pour protocoles cliniques validés sur ce sujet — cherche: guidelines internationales, manuels de thérapie, échelles d'évaluation, outils cliniques (ex: CBT protocol PTSD, DBT manual borderline)",
+  "pubmed_cited": "requête PubMed anglais pour les études les PLUS CITÉES sur ce sujet — utilise termes MeSH précis (ex: ADHD[MeSH] cognitive behavioral therapy meta-analysis)",
+  "pubmed_recent": "requête PubMed anglais pour études RÉCENTES 2022-2025 sur ce sujet — termes précis",
   "official": "requête HAS ANSM OMS sur ce sujet",
-  "research": "requête PubMed Inserm anglais sur ce sujet",
   "general": "requête générale praticiens français sur ce sujet"
 }`
         }]
@@ -165,12 +215,14 @@ JSON uniquement, pas de texte avant/après:
       reddit_fr: t, reddit_en: t,
       instagram: `${t} instagram praticien`,
       facebook: `${t} groupe facebook france`,
-      linkedin_voices: `psychiatre psychologue ${t} france linkedin`,
+      linkedin_kol: `professeur psychiatre ${t} france key opinion leader`,
       linkedin_articles: `${t} article linkedin santé mentale france`,
       forums: `${t} forum discussion psychologie psychiatrie france`,
-      official: `${t} HAS ANSM`,
-      research: `${t} treatment pubmed inserm`,
-      general: `${t} santé mentale france`,
+      protocols: `${t} clinical protocol guidelines therapy manual`,
+      pubmed_cited: `${t} meta-analysis systematic review`,
+      pubmed_recent: `${t} treatment 2023 2024 2025`,
+      official: `${t} HAS ANSM recommandations`,
+      general: `${t} santé mentale france praticien`,
     };
   }
 }
@@ -178,24 +230,25 @@ JSON uniquement, pas de texte avant/après:
 const SYSTEM_PROMPT = `Tu es MindBase, agent clinique expert en santé mentale pour praticiens français.
 LANGUE : Français uniquement.
 
-RÈGLE ABSOLUE : Utilise UNIQUEMENT les URLs exactes des résultats fournis. Ne génère jamais d'URL toi-même.
+RÈGLE ABSOLUE : Utilise UNIQUEMENT les URLs exactes des résultats fournis. Ne génère jamais d'URL.
 Si section vide : "Rechercher manuellement : [terme exact sur cette plateforme]"
 
-FORMAT — inclus toutes les sections qui ont des résultats :
+FORMAT — dans cet ordre exact, sections pertinentes uniquement :
+### 📋 Protocoles & Guidelines
+### 🔬 Recherches clés (articles les plus cités)
+### 🔬 Recherches récentes (2022-2025)
+### 📄 Recommandations officielles
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
+### 🔗 LinkedIn — Key Opinion Leaders
 ### 📸 Instagram
 ### 👥 Facebook
-### 🔗 LinkedIn
 ### 💬 Reddit & Forums
-### 🔬 Recherches récentes
-### 📄 Recommandations officielles
-### 📋 Protocoles (si pertinent)
 
+Pour LinkedIn KOL : mentionne le titre académique, institution, et pourquoi ils sont une référence sur ce sujet.
+Pour PubMed : indique [Très cité] ou [Récent] selon le tag fourni.
 Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante.
-Pour LinkedIn : distingue les profils de praticiens influents des articles professionnels.
-Pour Reddit & Forums : inclus à la fois les communautés Reddit ET les forums médicaux/professionnels français.
-Sois concis — 3 lignes max par ressource. Couvre TOUTES les sections disponibles.
+3 lignes max par ressource. Couvre TOUTES les sections disponibles.
 Outil d'aide décisionnelle uniquement.`;
 
 export default async function handler(req, res) {
@@ -208,8 +261,12 @@ export default async function handler(req, res) {
   try {
     const q = await generateSearchQueries(lastMessage);
 
-    // ── 8 Brave calls (7 if Reddit OAuth credentials set) ─────────
+    // ── Searches — PubMed uses free API (no Brave credits) ────────
+    // Brave credits used: max 8 (7 if Reddit OAuth set)
     const [
+      protocols,
+      pubmed,
+      official,
       books,
       videos,
       reddit,
@@ -217,56 +274,64 @@ export default async function handler(req, res) {
       facebook,
       linkedin,
       forums,
-      officialResearch,
       general,
     ] = await Promise.all([
-      // 1 — Books on French bookstore sites only
+      // 1 — Protocols: clinical guidelines, therapy manuals, evaluation tools
+      braveSearch(
+        `${q.protocols} (site:has-sante.fr OR site:nice.org.uk OR site:apa.org OR site:who.int OR clinical protocol guidelines "evidence-based")`,
+        5
+      ),
+
+      // 0 Brave credits — PubMed direct API, both cited + recent
+      pubmedSearch(`(${q.pubmed_cited}) OR (${q.pubmed_recent})`),
+
+      // 1 — Official French/EU guidelines
+      braveSearch(`${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int OR site:ema.europa.eu`, 4),
+
+      // 1 — Books on French bookstore sites
       braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`),
 
-      // 1 video credit — YouTube via video endpoint
+      // 1 video credit — YouTube
       braveVideoSearch(q.videos),
 
       // 0 (OAuth) or 1 (Brave fallback) — Reddit
       redditSearch(q.reddit_fr, q.reddit_en),
 
-      // 1 — Instagram dedicated: use broader terms without site: restriction
-      // Brave indexes public IG posts; combining hashtag terms works better
+      // 1 — Instagram
       braveSearch(`instagram.com ${q.instagram}`, 5),
 
-      // 1 — Facebook groups dedicated
+      // 1 — Facebook groups
       braveSearch(`site:facebook.com groups ${q.facebook}`, 4),
 
-      // 1 — LinkedIn: search BOTH key voices AND articles
-      // Using linkedin.com/pulse for articles and linkedin.com/in for profiles
-      braveSearch(`(site:linkedin.com/pulse ${q.linkedin_articles}) OR (site:linkedin.com/in ${q.linkedin_voices})`, 5),
-
-      // 1 — Professional forums ONLY — no social media, specific French medical forums
-      // Explicitly targets known French health/psychology forum domains
+      // 1 — LinkedIn: KOLs + articles
+      // Target linkedin.com/in for profiles and linkedin.com/pulse for articles
       braveSearch(
-        `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:sante.journaldesfemmes.fr OR site:aufeminin.com OR forum psychologie psychiatrie santé mentale france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com)`,
+        `(site:linkedin.com/in ${q.linkedin_kol} psychiatre OR psychologue OR professeur) OR (site:linkedin.com/pulse ${q.linkedin_articles})`,
         6
       ),
 
-      // 1 — Official guidelines + research combined (similar authoritative content)
+      // 1 — Professional French forums only, exclude social media
       braveSearch(
-        `(${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int) OR (${q.research} site:pubmed.ncbi.nlm.nih.gov OR site:inserm.fr OR site:psyarxiv.com OR site:hal.science)`,
+        `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:sante.journaldesfemmes.fr OR "forum" psychologie psychiatrie "santé mentale" france) -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com`,
         6
       ),
 
-      // 1 — General broad search
-      braveSearch(q.general, 5),
+      // 1 — General
+      braveSearch(q.general, 4),
     ]);
 
     const sections = [
-      books          && `[LIVRES]\n${books}`,
-      videos         && `[VIDÉOS YOUTUBE]\n${videos}`,
-      reddit         && `[REDDIT]\n${reddit}`,
-      instagram      && `[INSTAGRAM]\n${instagram}`,
-      facebook       && `[FACEBOOK]\n${facebook}`,
-      linkedin       && `[LINKEDIN — Voix clés & Articles]\n${linkedin}`,
-      forums         && `[FORUMS MÉDICAUX & PROFESSIONNELS]\n${forums}`,
-      officialResearch && `[RECOMMANDATIONS OFFICIELLES & RECHERCHES]\n${officialResearch}`,
-      general        && `[GÉNÉRAL]\n${general}`,
+      protocols  && `[PROTOCOLES & GUIDELINES CLINIQUES]\n${protocols}`,
+      pubmed     && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
+      official   && `[RECOMMANDATIONS OFFICIELLES]\n${official}`,
+      books      && `[LIVRES]\n${books}`,
+      videos     && `[VIDÉOS YOUTUBE]\n${videos}`,
+      linkedin   && `[LINKEDIN — Key Opinion Leaders & Articles]\n${linkedin}`,
+      instagram  && `[INSTAGRAM]\n${instagram}`,
+      facebook   && `[FACEBOOK]\n${facebook}`,
+      reddit     && `[REDDIT]\n${reddit}`,
+      forums     && `[FORUMS MÉDICAUX & PROFESSIONNELS]\n${forums}`,
+      general    && `[GÉNÉRAL]\n${general}`,
     ].filter(Boolean);
 
     const augmentedMessages = [
@@ -279,7 +344,7 @@ export default async function handler(req, res) {
 ${sections.join("\n\n===\n\n") || "Aucun résultat."}
 === FIN ===
 
-RAPPEL : URLs exactes uniquement. Couvre toutes les sections. 3 lignes max par ressource.`,
+RAPPEL : URLs exactes uniquement. Respecte l'ordre des sections. 3 lignes max par ressource. Couvre tout.`,
       },
     ];
 
