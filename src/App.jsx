@@ -89,45 +89,48 @@ function parseContent(text) {
 function downloadAsPdf(text, title) {
   const cleanTitle = title.replace(/[#*📚▶️📸👥💬🔗🐦🔬📄📋]/g, "").trim().slice(0, 50);
 
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${cleanTitle}</title>
-<style>
-  @media print { .no-print { display: none !important; } @page { margin: 20mm; } }
-  body { font-family: Georgia, serif; max-width: 750px; margin: 40px auto; color: #1c1917; line-height: 1.7; font-size: 13px; }
-  h1 { font-size: 18px; color: #2d5a3d; border-bottom: 2px solid #2d5a3d; padding-bottom: 8px; margin-bottom: 20px; }
-  .section { font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #2d5a3d; margin-top: 20px; margin-bottom: 6px; border-bottom: 1px solid #e2ddd5; padding-bottom: 4px; }
-  .item { margin: 6px 0 6px 12px; border-left: 2px solid #a8cdb5; padding-left: 8px; }
-  a { color: #2d5a3d; }
-  .footer { margin-top: 40px; font-size: 11px; color: #a09a93; border-top: 1px solid #e2ddd5; padding-top: 10px; }
-  .print-btn { display: block; margin: 0 auto 24px; padding: 10px 24px; background: #2d5a3d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-family: system-ui, sans-serif; }
-</style></head><body>
-<button class="print-btn no-print" onclick="window.print()">📄 Enregistrer en PDF (Ctrl+P → Enregistrer en PDF)</button>
-<h1>MindBase — ${cleanTitle}</h1>
-${text.split("\n").map(line => {
-  const t = line.trim();
-  if (!t) return "<br>";
-  if (t.startsWith("### ")) return \`<div class="section">\${t.slice(4)}</div>\`;
-  if (t.startsWith("## ")) return \`<h2 style="font-size:15px;color:#1c1917">\${t.slice(3)}</h2>\`;
-  if (t.startsWith("- ") || t.startsWith("• ")) return \`<div class="item">\${t.slice(2).replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</div>\`;
-  return \`<p style="margin:3px 0">\${t.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</p>\`;
-}).join("\n")}
-<div class="footer">Généré par MindBase · ${new Date().toLocaleDateString("fr-FR", { day:"numeric", month:"long", year:"numeric" })}</div>
-</body></html>`;
+  const formatLine = (line) => {
+    const t = line.trim();
+    if (!t) return "<br>";
+    const linkify = s => s.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>');
+    if (t.startsWith("### ")) return '<div class="section">' + linkify(t.slice(4)) + "</div>";
+    if (t.startsWith("## ")) return '<h2 style="font-size:15px;color:#1c1917">' + linkify(t.slice(3)) + "</h2>";
+    if (t.startsWith("- ") || t.startsWith("• ")) return '<div class="item">' + linkify(t.slice(2)) + "</div>";
+    return '<p style="margin:3px 0">' + linkify(t) + "</p>";
+  };
 
-  // Write into a hidden iframe — never touches parent window, no focus loss, no React re-render
+  const body = text.split("\n").map(formatLine).join("\n");
+  const date = new Date().toLocaleDateString("fr-FR", { day:"numeric", month:"long", year:"numeric" });
+
+  const html = [
+    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>" + cleanTitle + "</title>",
+    "<style>",
+    "@media print { .no-print { display:none!important } @page { margin:20mm } }",
+    "body { font-family:Georgia,serif; max-width:750px; margin:40px auto; color:#1c1917; line-height:1.7; font-size:13px }",
+    "h1 { font-size:18px; color:#2d5a3d; border-bottom:2px solid #2d5a3d; padding-bottom:8px; margin-bottom:20px }",
+    ".section { font-weight:bold; font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:#2d5a3d; margin-top:20px; margin-bottom:6px; border-bottom:1px solid #e2ddd5; padding-bottom:4px }",
+    ".item { margin:6px 0 6px 12px; border-left:2px solid #a8cdb5; padding-left:8px }",
+    "a { color:#2d5a3d } .footer { margin-top:40px; font-size:11px; color:#a09a93; border-top:1px solid #e2ddd5; padding-top:10px }",
+    ".print-btn { display:block; margin:0 auto 24px; padding:10px 24px; background:#2d5a3d; color:white; border:none; border-radius:8px; cursor:pointer; font-size:14px; font-family:system-ui,sans-serif }",
+    "</style></head><body>",
+    "<button class='print-btn no-print' onclick='window.print()'>📄 Enregistrer en PDF</button>",
+    "<h1>MindBase — " + cleanTitle + "</h1>",
+    body,
+    "<div class='footer'>Généré par MindBase · " + date + "</div>",
+    "</body></html>"
+  ].join("\n");
+
   const iframe = document.createElement("iframe");
   iframe.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0;";
   document.body.appendChild(iframe);
   iframe.contentDocument.open();
   iframe.contentDocument.write(html);
   iframe.contentDocument.close();
-  // Small delay to let iframe render, then print from it
   setTimeout(() => {
     iframe.contentWindow.focus();
     iframe.contentWindow.print();
-    // Remove iframe after print dialog closes
-    setTimeout(() => document.body.removeChild(iframe), 2000);
-  }, 500);
+    setTimeout(() => { try { document.body.removeChild(iframe); } catch(e) {} }, 3000);
+  }, 400);
 }
 
 // ─── Username modal ───────────────────────────────────────────────
