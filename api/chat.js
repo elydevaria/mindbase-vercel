@@ -152,7 +152,7 @@ async function generateSearchQueries(userMessage) {
       },
       body: JSON.stringify({
         model: "mistral-small-latest",
-        max_tokens: 600,
+        max_tokens: 700,
         temperature: 0.1,
         messages: [{
           role: "user",
@@ -164,13 +164,12 @@ JSON uniquement, sans texte avant/après:
   "videos": "requête YouTube français sur ce sujet",
   "reddit_fr": "2-3 mots français pour Reddit",
   "reddit_en": "2-3 mots anglais pour Reddit",
-  "instagram": "termes et hashtags Instagram français sur ce sujet",
+  "instagram": "hashtags et comptes Instagram pertinents sur ce sujet en français — utilise des hashtags réels comme #TDAHFrance #psychologie #santemental #therapeute",
   "facebook": "noms groupes ou termes Facebook francophones sur ce sujet",
-  "linkedin_kol": "3-5 NOMS RÉELS de psychiatres ou psychologues FRANÇAIS reconnus sur ce sujet — uniquement PU-PH, chefs de service CHU, auteurs de recommandations HAS, présidents de sociétés savantes (SFPEADA, SPF, AFPDB, SFP). Format: 'Pr/Dr Prénom Nom spécialité' (ex: 'Pr Marie-France Moro psychiatrie transculturelle'). Ces personnes doivent être réellement connues.",
-  "protocols": "requête EN ANGLAIS ET EN FRANÇAIS pour protocoles cliniques validés — cherche simultanément sur HAS (termes français officiels), NICE, Cochrane, APA, WHO. Utilise plusieurs synonymes séparés par OR (ex: 'trouble déficit attention hyperactivité OR TDAH OR ADHD clinical guideline protocol recommandation')",
-  "pubmed_cited": "requête PubMed anglais termes MeSH pour études les plus citées (ex: 'ADHD[MeSH] meta-analysis')",
+  "linkedin_kol": "requête pour trouver les KEY OPINION LEADERS sur LinkedIn sur ce sujet — cible les personnes qui ont BEAUCOUP de followers car elles sont: (1) auteurs de livres très vendus sur ce sujet, (2) conférenciers TED ou grandes conférences médicales, (3) fondateurs d'associations de patients connues, (4) psychiatres/psychologues avec présence médias (télé, podcasts, presse). Cherche leur nom + 'linkedin' pour trouver leur profil. Ex: 'Thomas Plante psychologue linkedin' ou 'Christophe André méditation linkedin'",
+  "recommendations": "requête complète pour recommandations ET protocoles cliniques — utilise termes français ET anglais: HAS NICE Cochrane APA WHO guidelines protocoles recommandations (ex: 'TDAH recommandations HAS OR ADHD NICE guidelines OR ADHD Cochrane review')",
+  "pubmed_cited": "requête PubMed anglais termes MeSH pour études les plus citées",
   "pubmed_recent": "requête PubMed anglais études récentes 2022-2025",
-  "official": "requête française pour recommandations officielles sur ce sujet — utilise les termes nosologiques français officiels utilisés par la HAS",
   "forums": "termes précis pour forums médicaux professionnels français sur ce sujet",
   "general": "requête générale praticiens français sur ce sujet"
 }`
@@ -188,13 +187,12 @@ JSON uniquement, sans texte avant/après:
       books: `${t} livre france`,
       videos: `${t} youtube français`,
       reddit_fr: t, reddit_en: t,
-      instagram: `${t} instagram praticien`,
+      instagram: `#${t.replace(/\s+/g, "")} instagram praticien france`,
       facebook: `${t} groupe facebook france`,
-      linkedin_kol: `professeur psychiatre psychologue ${t} france CHU`,
-      protocols: `${t} OR ${t} clinical guideline protocole recommandation HAS NICE`,
+      linkedin_kol: `${t} psychiatre psychologue conférencier auteur linkedin france`,
+      recommendations: `${t} recommandations HAS OR guidelines NICE OR Cochrane review`,
       pubmed_cited: `${t} meta-analysis systematic review`,
       pubmed_recent: `${t} treatment 2023 2024`,
-      official: `${t} recommandations HAS ANSM`,
       forums: `${t} forum psychologie psychiatrie france`,
       general: `${t} santé mentale france praticien`,
     };
@@ -208,10 +206,9 @@ RÈGLE ABSOLUE : Utilise UNIQUEMENT les URLs exactes des résultats fournis. Ne 
 Si section vide : "Rechercher manuellement : [terme exact]"
 
 FORMAT — dans cet ordre, sections pertinentes uniquement :
-### 📋 Protocoles & Guidelines
 ### 🔬 Articles les plus cités
 ### 🔬 Recherches récentes (2022-2025)
-### 📄 Recommandations officielles
+### 📄 Recommandations & Protocoles
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
 ### 🔗 LinkedIn — Key Opinion Leaders
@@ -220,9 +217,9 @@ FORMAT — dans cet ordre, sections pertinentes uniquement :
 ### 💬 Reddit
 ### 💬 Forums professionnels
 
-Pour LinkedIn KOL : indique titre (Pr./Dr.), institution (CHU/université), spécialité. Ne cite que des profils présents dans les résultats.
-Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français, pas de réseaux sociaux.
-Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max par ressource.
+Pour LinkedIn KOL : ce sont des personnes très suivies sur LinkedIn car connues du grand public ou de la communauté médicale (auteurs, conférenciers, fondateurs d'associations). Indique pourquoi ils sont influents (auteur de X, conférencier à Y, fondateur de Z).
+Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français.
+Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max.
 Couvre TOUTES les sections disponibles. Outil d'aide décisionnelle uniquement.`;
 
 export default async function handler(req, res) {
@@ -235,13 +232,10 @@ export default async function handler(req, res) {
   try {
     const q = await generateSearchQueries(lastMessage);
 
-    // ── Max 8 Brave credits (7 if Reddit OAuth) ───────────────────
-    // LinkedIn articles removed — saves 1 credit
-    // Protocols uses broad multi-source query instead of HAS-specific
+    // ── 8 Brave credits max (7 with Reddit OAuth) ─────────────────
     const [
-      protocols,
+      recommendations,
       pubmed,
-      official,
       books,
       videos,
       reddit,
@@ -252,23 +246,15 @@ export default async function handler(req, res) {
       general,
     ] = await Promise.all([
 
-      // 1 — Protocols: broad search across ALL trusted clinical sources
-      // No single HAS query — instead searches HAS + NICE + Cochrane + APA + WHO simultaneously
-      // Uses both French AND English terms so nothing is missed
+      // 1 — Recommendations + protocols merged into one strong search
+      // Uses bilingual terms to hit both HAS (French) and NICE/Cochrane/APA (English)
       braveSearch(
-        `(${q.protocols}) (site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:sfpeada.fr OR site:inserm.fr)`,
+        `${q.recommendations} (site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
         6
       ),
 
-      // 0 credits — PubMed direct API, cited + recent
+      // 0 credits — PubMed direct API
       pubmedSearch(q.pubmed_cited, q.pubmed_recent),
-
-      // 1 — Official guidelines: broad French nosological terms across HAS/ANSM/Inserm
-      // Uses official French diagnostic terminology to match HAS document titles
-      braveSearch(
-        `${q.official} (site:has-sante.fr OR site:ansm.sante.fr OR site:inserm.fr OR site:who.int)`,
-        5
-      ),
 
       // 1 — Books
       braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`),
@@ -279,20 +265,22 @@ export default async function handler(req, res) {
       // 0 (OAuth) or 1 (Brave fallback)
       redditSearch(q.reddit_fr, q.reddit_en),
 
-      // 1 — Instagram
-      braveSearch(`instagram.com ${q.instagram}`, 4),
+      // 1 — Instagram: use hashtag terms WITHOUT site: restriction
+      // site:instagram.com is too restrictive — Brave indexes IG better without it
+      braveSearch(`instagram ${q.instagram} -site:facebook.com -site:twitter.com`, 5),
 
-      // 1 — Facebook
+      // 1 — Facebook groups
       braveSearch(`site:facebook.com groups ${q.facebook}`, 4),
 
-      // 1 — LinkedIn KOLs: search named experts, not generic site: search
-      // Searching name + specialty finds their actual indexed public profiles
+      // 1 — LinkedIn KOLs: target known influencers by external reputation
+      // People who are authors, TED speakers, podcast hosts, association founders
+      // have the highest follower counts — find them via their external presence
       braveSearch(
-        `(${q.linkedin_kol}) "linkedin.com" (psychiatre OR psychologue OR "PU-PH" OR "chef de service" OR "professeur")`,
+        `${q.linkedin_kol} (site:linkedin.com/in OR "profil linkedin" OR "suivre sur linkedin")`,
         5
       ),
 
-      // 1 — French professional forums only, max 5, no social media
+      // 1 — French professional forums, max 5, no social media
       braveSearch(
         `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:soignants.com OR site:infirmiers.com OR site:jim.fr OR "forum" psychiatrie psychologie france) -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com`,
         5
@@ -303,17 +291,16 @@ export default async function handler(req, res) {
     ]);
 
     const sections = [
-      protocols  && `[PROTOCOLES & GUIDELINES — HAS / NICE / Cochrane / APA / WHO]\n${protocols}`,
-      pubmed     && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
-      official   && `[RECOMMANDATIONS OFFICIELLES — HAS / ANSM / Inserm]\n${official}`,
-      books      && `[LIVRES]\n${books}`,
-      videos     && `[VIDÉOS YOUTUBE]\n${videos}`,
-      linkedin   && `[LINKEDIN — Key Opinion Leaders]\n${linkedin}`,
-      instagram  && `[INSTAGRAM]\n${instagram}`,
-      facebook   && `[FACEBOOK]\n${facebook}`,
-      reddit     && `[REDDIT]\n${reddit}`,
-      forums     && `[FORUMS MÉDICAUX & PROFESSIONNELS]\n${forums}`,
-      general    && `[GÉNÉRAL]\n${general}`,
+      pubmed          && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
+      recommendations && `[RECOMMANDATIONS & PROTOCOLES — HAS / NICE / Cochrane / APA / WHO]\n${recommendations}`,
+      books           && `[LIVRES]\n${books}`,
+      videos          && `[VIDÉOS YOUTUBE]\n${videos}`,
+      linkedin        && `[LINKEDIN — Key Opinion Leaders]\n${linkedin}`,
+      instagram       && `[INSTAGRAM]\n${instagram}`,
+      facebook        && `[FACEBOOK]\n${facebook}`,
+      reddit          && `[REDDIT]\n${reddit}`,
+      forums          && `[FORUMS MÉDICAUX & PROFESSIONNELS]\n${forums}`,
+      general         && `[GÉNÉRAL]\n${general}`,
     ].filter(Boolean);
 
     const augmentedMessages = [
