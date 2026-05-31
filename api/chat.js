@@ -12,7 +12,6 @@ async function search(query) {
         query,
         search_depth: "advanced",
         max_results: 5,
-        include_domains: [],
         exclude_domains: ["pinterest.com", "slideshare.net", "scribd.com"],
       }),
     });
@@ -26,6 +25,61 @@ async function search(query) {
   }
 }
 
+async function generateSearchQueries(userMessage) {
+  // Ask Mistral to generate smart targeted search queries
+  const res = await fetch(MISTRAL_API, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: "mistral-small-latest",
+      max_tokens: 300,
+      temperature: 0.1,
+      messages: [{
+        role: "user",
+        content: `Tu es un expert en recherche web pour des praticiens de santé mentale français.
+        
+Pour cette question : "${userMessage}"
+
+Génère exactement 6 requêtes de recherche optimisées en JSON. Adapte les termes médicaux français (ex: TDAH pas ADHD, dépression pas depression, etc.) et cible les bonnes plateformes.
+
+Réponds UNIQUEMENT avec ce JSON, rien d'autre :
+{
+  "queries": [
+    "requête pour livres Amazon.fr et Fnac",
+    "requête pour vidéos YouTube francophones",
+    "requête pour forums Reddit et communautés françaises",
+    "requête pour recommandations officielles HAS ANSM",
+    "requête pour recherches PubMed Inserm",
+    "requête pour Instagram Facebook groupes professionnels"
+  ]
+}`
+      }]
+    }),
+  });
+  
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content || "";
+  
+  try {
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return parsed.queries || [];
+  } catch (e) {
+    // Fallback queries if parsing fails
+    return [
+      `${userMessage} livre amazon.fr fnac`,
+      `${userMessage} youtube français praticien`,
+      `${userMessage} reddit forum france`,
+      `${userMessage} has-sante.fr recommandations`,
+      `${userMessage} pubmed inserm recherche`,
+      `${userMessage} instagram facebook groupe`,
+    ];
+  }
+}
+
 const SYSTEM_PROMPT = `Tu es MindBase, un agent clinique expert en santé mentale dédié aux praticiens français.
 LANGUE : Réponds TOUJOURS en français.
 
@@ -33,7 +87,6 @@ RÈGLE ABSOLUE SUR LES LIENS :
 - Utilise UNIQUEMENT les URLs exactes présentes dans les résultats de recherche fournis
 - Copie les URLs mot pour mot — ne les modifie JAMAIS
 - Si une URL n'est pas dans les résultats, écris "Rechercher : [terme exact]" — ne génère RIEN
-- Vérifie que chaque URL que tu cites est bien dans les résultats avant de la mentionner
 
 FORMAT — utilise uniquement les sections pertinentes :
 ### 📚 Livres
@@ -55,56 +108,29 @@ export default async function handler(req, res) {
 
   const lastMessage = messages[messages.length - 1].content;
 
-  // Detect what kind of query it is to target searches better
-  const isBooks = /livre|book|manuel|ouvrage|lire|fnac|amazon/i.test(lastMessage);
-  const isVideo = /vid[eé]o|youtube|regarder|formation/i.test(lastMessage);
-  const isResearch = /recherche|[eé]tude|pubmed|article|publication|preuve/i.test(lastMessage);
-  const isGuideline = /recommandation|has|ansm|guideline|protocole|officiel/i.test(lastMessage);
-  const isSocial = /instagram|facebook|reddit|communaut[eé]|forum|linkedin/i.test(lastMessage);
+  try {
+    // Step 1 — generate smart search queries based on user question
+    const queries = await generateSearchQueries(lastMessage);
 
-  // Always run general + 2-3 targeted searches based on query type
-  const searches = [
-    search(`${lastMessage} France praticien psychologue psychiatre`),
-  ];
+    // Step 2 — run all searches in parallel
+    const results = await Promise.all(queries.map(q => search(q)));
+    const searchContext = results.filter(Boolean).join("\n\n===\n\n");
 
-  if (isBooks || !isVideo && !isResearch && !isGuideline && !isSocial) {
-    searches.push(search(`${lastMessage} livre amazon.fr`));
-    searches.push(search(`${lastMessage} livre fnac.com`));
-  }
-  if (isVideo || (!isBooks && !isResearch && !isGuideline && !isSocial)) {
-    searches.push(search(`${lastMessage} youtube.com français`));
-  }
-  if (isResearch || (!isBooks && !isVideo && !isGuideline && !isSocial)) {
-    searches.push(search(`${lastMessage} pubmed.ncbi.nlm.nih.gov`));
-    searches.push(search(`${lastMessage} inserm.fr`));
-  }
-  if (isGuideline || (!isBooks && !isVideo && !isResearch && !isSocial)) {
-    searches.push(search(`${lastMessage} has-sante.fr recommandations`));
-    searches.push(search(`${lastMessage} ansm.sante.fr`));
-  }
-  if (isSocial || (!isBooks && !isVideo && !isResearch && !isGuideline)) {
-    searches.push(search(`${lastMessage} reddit.com france`));
-    searches.push(search(`${lastMessage} instagram facebook groupe france`));
-  }
-
-  const results = await Promise.all(searches);
-  const searchContext = results.filter(Boolean).join("\n\n===\n\n");
-
-  const augmentedMessages = [
-    ...messages.slice(0, -1),
-    {
-      role: "user",
-      content: `${lastMessage}
+    // Step 3 — ask Mistral to answer using real search results
+    const augmentedMessages = [
+      ...messages.slice(0, -1),
+      {
+        role: "user",
+        content: `${lastMessage}
 
 === RÉSULTATS DE RECHERCHE WEB EN TEMPS RÉEL ===
 ${searchContext || "Aucun résultat trouvé"}
 === FIN DES RÉSULTATS ===
 
 RAPPEL : Utilise UNIQUEMENT les URLs ci-dessus, copiées exactement. N'en invente aucune.`,
-    },
-  ];
+      },
+    ];
 
-  try {
     const response = await fetch(MISTRAL_API, {
       method: "POST",
       headers: {
