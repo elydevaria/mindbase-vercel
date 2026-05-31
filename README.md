@@ -1,133 +1,69 @@
-# MindBase — Déploiement Vercel (tout-en-un)
-**Coût : €0** · **Temps : 20 minutes** · **Un seul service : Vercel**
+# 🧠 MindBase — Agent Clinique en Santé Mentale
+
+Un outil de recherche intelligent pour les praticiens français en santé mentale — psychiatres, psychologues, psychothérapeutes.
+
+**👉 [mindbase-seven.vercel.app](https://mindbase-seven.vercel.app)**
 
 ---
 
-## Architecture
+## Pour les praticiens
 
+**1. Créez votre espace**
+Choisissez un nom d'utilisateur à la première visite (ex: `dr_martin`, `marie_psy`). Pas de mot de passe — ce nom suffit pour retrouver votre bibliothèque sur n'importe quel appareil.
+
+**2. Posez une question**
+Tapez n'importe quel sujet clinique :
+- *Ressources complètes sur le TDAH adulte*
+- *Protocoles TCC pour l'anxiété — recommandations HAS*
+- *Recherches récentes sur la dépression résistante*
+
+**3. Explorez les résultats**
+Chaque réponse est structurée en sections : articles PubMed, recommandations officielles, livres, vidéos YouTube, Instagram, Reddit, forums professionnels.
+
+**4. Sauvegardez ce qui vous est utile**
+Cliquez sur **🔖 Sauvegarder** pour ajouter une ressource à votre bibliothèque avec des tags et une note personnelle. Retrouvez tout dans **📚 Ma bibliothèque**.
+
+**5. Téléchargez en PDF**
+Cliquez sur **⬇️ PDF** sous n'importe quelle réponse pour l'enregistrer.
+
+**6. Analysez des documents**
+Cliquez sur **📎 Analyser PDFs & liens** pour importer un article ou une recommandation HAS — MindBase en extrait les points clés.
+
+---
+
+## Pour les développeurs
+
+MindBase est un agent RAG (Retrieval-Augmented Generation) conçu pour un cas d'usage clinique réel avec ~500 utilisateurs cibles. Construit et itéré entièrement via prompting avec Claude.
+
+**Stack**
+- **Frontend** — React 18, Vite, CSS-in-JS pur (pas de framework UI)
+- **Backend** — Vercel Serverless Functions (Node.js)
+- **LLM** — Mistral AI (`mistral-small-latest`) pour la génération de requêtes et la synthèse
+- **Recherche** — Brave Search API (web + vidéo), PubMed E-utilities API (gratuite, sans clé)
+- **Base de données** — Supabase (PostgreSQL) pour la bibliothèque personnelle
+- **Déploiement** — Vercel (frontend + API dans un seul repo)
+
+**Architecture**
 ```
-Praticiens  →  Vercel (frontend React + API serverless)
-                  ├── /api/chat.js       → Mistral AI
-                  ├── /api/analyse.js    → Mistral AI + fetch URLs
-                  └── /api/library.js    → Supabase (bibliothèque)
-```
-
-Tout est dans un seul projet Vercel. Pas de Railway, pas de serveur séparé.
-
----
-
-## Étape 1 — Clé Mistral (5 min)
-
-1. → **https://console.mistral.ai**
-2. Créez un compte gratuit (pas de carte bancaire)
-3. **API Keys** → **Create new key**
-4. Copiez la clé (commence par plusieurs caractères alphanumériques)
-
----
-
-## Étape 2 — Base de données Supabase (5 min)
-
-1. → **https://supabase.com** → **Start for free**
-2. Créez un nouveau projet — choisissez région **West EU**
-3. Attendez ~2 min que le projet démarre
-4. Allez dans **SQL Editor** → collez le contenu de `supabase-schema.sql` → **Run**
-5. Allez dans **Settings → API**, copiez :
-   - **Project URL** : `https://xxxx.supabase.co`
-   - **anon / public key** : `eyJ...`
-
----
-
-## Étape 3 — Déployer sur Vercel (10 min)
-
-### Option A — Via GitHub (recommandé)
-
-1. Créez un compte sur **https://github.com** si vous n'en avez pas
-2. Créez un nouveau repository (bouton **+** → New repository)
-3. Uploadez tous les fichiers de ce dossier dans le repository
-4. Allez sur **https://vercel.com** → connectez-vous avec GitHub
-5. **Add New Project** → importez votre repository
-6. Avant de cliquer Deploy, ajoutez les **Environment Variables** :
-
-   | Nom | Valeur |
-   |-----|--------|
-   | `MISTRAL_API_KEY` | votre clé Mistral |
-   | `SUPABASE_URL` | `https://xxxx.supabase.co` |
-   | `SUPABASE_ANON_KEY` | `eyJ...` |
-
-7. Cliquez **Deploy** → attendez 2 minutes
-
-### Option B — Via Vercel CLI
-
-```bash
-# Installez Vercel CLI
-npm install -g vercel
-
-# Dans ce dossier
-npm install
-vercel
-
-# Suivez les instructions, puis ajoutez les variables :
-vercel env add MISTRAL_API_KEY
-vercel env add SUPABASE_URL
-vercel env add SUPABASE_ANON_KEY
-
-# Redéployez
-vercel --prod
+React (src/) → Vercel Serverless (api/)
+                 ├── chat.js       Mistral génère des requêtes ciblées → Brave Search
+                 ├── analyse.js    Analyse PDFs et URLs via Mistral
+                 └── library.js    CRUD bibliothèque → Supabase
 ```
 
----
-
-## Résultat
-
-Vercel vous donne une URL du type :
-**`https://mindbase-xxxx.vercel.app`**
-
-Partagez cette URL avec vos praticiens. C'est tout.
+**Points techniques notables**
+- Pipeline de recherche multi-sources en parallèle (10+ sources simultanées)
+- PubMed API directe avec filtre sur le type de publication (exclut obituaires, éditoriaux)
+- Système d'identité sans authentification — nom d'utilisateur comme clé Supabase
+- Export PDF via iframe caché (évite la perte d'état React)
+- Reddit OAuth2 avec fallback Brave si identifiants non configurés
 
 ---
 
-## Tester que tout fonctionne
+## Sources consultées
 
-- [ ] Posez une question → réponse Mistral en français ✓
-- [ ] Cliquez 🔖 Sauvegarder → apparaît dans la bibliothèque ✓
-- [ ] Ajoutez un lien URL → contenu analysé ✓
-- [ ] Rechargez la page → bibliothèque toujours là ✓
+HAS · ANSM · Inserm · OMS · PubMed · NICE · Cochrane · APA · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac · LinkedIn
 
 ---
 
-## Limites gratuites
-
-| Service | Limite gratuite | Pour 500 users/mois |
-|---------|----------------|---------------------|
-| Vercel | 100GB bandwidth, fonctions illimitées | ✅ Largement suffisant |
-| Mistral | 500K tokens/jour, 1 req/sec | ✅ Suffisant si non-simultané |
-| Supabase | 50 000 lignes, 500MB | ✅ Suffisant |
-
----
-
-## Si vous dépassez les limites
-
-Uniquement Mistral risque d'être limité si beaucoup d'utilisateurs simultanés.
-Solution : passez au plan pay-as-you-go Mistral → environ **€5–10/mois** pour 500 users.
-Vercel et Supabase restent gratuits à ce volume.
-
----
-
-## Structure des fichiers
-
-```
-mindbase-vercel/
-├── api/
-│   ├── chat.js          ← appelle Mistral pour le chat
-│   ├── analyse.js       ← récupère les URLs + analyse avec Mistral
-│   └── library.js       ← sauvegarde/récupère la bibliothèque (Supabase)
-├── src/
-│   ├── App.jsx          ← toute l'interface React
-│   └── main.jsx         ← point d'entrée React
-├── index.html
-├── vite.config.js
-├── vercel.json
-├── package.json
-├── supabase-schema.sql  ← à coller dans Supabase une seule fois
-└── .env.example         ← vos clés (ne jamais committer avec les vraies valeurs)
-```
+*Outil d'aide à la décision clinique — ne remplace pas le jugement professionnel du praticien.*
