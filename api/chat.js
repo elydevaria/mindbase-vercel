@@ -505,9 +505,9 @@ export default async function handler(req, res) {
         role: "user",
         content: `${lastMessage}
 
-=== RÉSULTATS (${sections.length} sources) ===
-${sections.join("\n\n===\n\n") || "Aucun résultat."}
-=== FIN ===
+=== DÉBUT RÉSULTATS (${sections.length} sources) ===
+${sections.join("\n\n---\n\n") || "Aucun résultat."}
+=== FIN RÉSULTATS ===
 
 RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5 Forums. 3 lignes max. Couvre tout.`,
       },
