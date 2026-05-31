@@ -1,5 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
+
 const API = "";
 
 // ─── Username / Identity ──────────────────────────────────────────
@@ -388,6 +398,8 @@ const QUICK_SUGGESTIONS = [
 
 // ─── Main app ─────────────────────────────────────────────────────
 export default function MindBase() {
+  const isMobile = useIsMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userId, setUserId] = useState(getStoredUsername());
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -493,14 +505,18 @@ export default function MindBase() {
   if (!userId) return <UsernameModal onConfirm={name => { setUserId(name); }} />;
 
   return (
-    <div style={{ display:"flex", height:"100vh", fontFamily:"system-ui,sans-serif", background:"#f5f3ee", overflow:"hidden" }}>
+    <div style={{ display:"flex", height:"100vh", fontFamily:"system-ui,sans-serif", background:"#f5f3ee", overflow:"hidden", position:"relative" }}>
+      {/* Mobile sidebar overlay */}
+      {isMobile && sidebarOpen && (
+        <div onClick={()=>setSidebarOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:400 }} />
+      )}
       {toast && <div style={{ position:"fixed", top:16, left:"50%", transform:"translateX(-50%)", background:"#2d5a3d", color:"#fff", padding:"10px 20px", borderRadius:30, fontSize:13, zIndex:300, fontWeight:500 }}>{toast}</div>}
       {saveTarget && <SaveModal message={saveTarget} onSave={saveToLibrary} onClose={()=>setSaveTarget(null)} />}
       {showLibrary && <LibraryView items={library} onClose={()=>setShowLibrary(false)} onDelete={deleteFromLibrary} />}
       {analyseOpen && <AnalyseModal onAnalyse={handleAnalyse} onClose={()=>setAnalyseOpen(false)} />}
 
       {/* Sidebar */}
-      <aside style={{ width:220, background:"#fff", borderRight:"1px solid #e2ddd5", display:"flex", flexDirection:"column", flexShrink:0 }}>
+      <aside style={{ width:220, background:"#fff", borderRight:"1px solid #e2ddd5", display: isMobile ? "none" : "flex", flexDirection:"column", flexShrink:0, ...(isMobile && sidebarOpen ? { display:"flex", position:"fixed", top:0, left:0, height:"100vh", zIndex:450, transform:"translateX(0)", transition:"transform 0.25s ease", boxShadow:"4px 0 20px rgba(0,0,0,0.15)" } : {}) }}>
         <div style={{ padding:"20px 18px 16px", borderBottom:"1px solid #e2ddd5" }}>
           <div style={{ fontFamily:"Georgia,serif", fontSize:22, color:"#2d5a3d" }}>MindBase</div>
           <div style={{ fontSize:11, color:"#a09a93", marginTop:2 }}>Agent clinique · Santé mentale</div>
@@ -536,13 +552,24 @@ export default function MindBase() {
 
       {/* Chat */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
-        <div ref={chatRef} style={{ flex:1, overflowY:"auto", padding:"22px 24px 0", display:"flex", flexDirection:"column", gap:14 }}>
+        {/* Mobile top bar */}
+        {isMobile && (
+          <div style={{ background:"#fff", borderBottom:"1px solid #e2ddd5", padding:"10px 16px", display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
+            <button onClick={()=>setSidebarOpen(o=>!o)} style={{ border:"none", background:"none", fontSize:20, cursor:"pointer", color:"#2d5a3d", padding:0, lineHeight:1 }}>☰</button>
+            <div style={{ fontFamily:"Georgia,serif", fontSize:18, color:"#2d5a3d" }}>MindBase</div>
+            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+              <button onClick={()=>{ loadLibrary(userId); setShowLibrary(true); }} style={{ border:"1px solid #a8cdb5", background:"#eaf3ee", borderRadius:20, padding:"5px 10px", fontSize:11, cursor:"pointer", color:"#2d5a3d", fontFamily:"system-ui,sans-serif" }}>📚 {library.length}</button>
+              <button onClick={()=>setAnalyseOpen(true)} style={{ border:"1px solid #cec9bf", background:"#f0ede6", borderRadius:20, padding:"5px 10px", fontSize:11, cursor:"pointer", color:"#4a4540", fontFamily:"system-ui,sans-serif" }}>📎</button>
+            </div>
+          </div>
+        )}
+        <div ref={chatRef} style={{ flex:1, overflowY:"auto", padding: isMobile ? "12px 10px 0" : "22px 24px 0", display:"flex", flexDirection:"column", gap:12 }}>
           {messages.length===0 && (
-            <div style={{ background:"#fff", border:"1px solid #e2ddd5", borderRadius:14, padding:26 }}>
-              <div style={{ fontFamily:"Georgia,serif", fontSize:25, color:"#1c1917", marginBottom:8 }}>Bonjour, <em style={{ color:"#2d5a3d" }}>{userId}</em> 👋</div>
-              <div style={{ fontSize:13, color:"#6b6560", lineHeight:1.75, marginBottom:18, maxWidth:520 }}>Posez une question sur n'importe quel sujet clinique — je structure ma réponse en sections : livres, vidéos, Instagram, Facebook, Reddit, recherches, recommandations HAS. Sauvegardez et téléchargez en PDF ce qui vous est utile.</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                {QUICK_SUGGESTIONS.slice(0,4).map((s,i)=><button key={i} onClick={()=>sendMessage(s)} style={{ padding:"11px 14px", background:"#f5f3ee", border:"1px solid #e2ddd5", borderRadius:10, cursor:"pointer", textAlign:"left", fontFamily:"system-ui,sans-serif", fontSize:12, color:"#3a3530", lineHeight:1.5 }} onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.borderColor="#a8cdb5";}} onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ee";e.currentTarget.style.borderColor="#e2ddd5";}}>{s}</button>)}
+            <div style={{ background:"#fff", border:"1px solid #e2ddd5", borderRadius:14, padding: isMobile ? 16 : 26 }}>
+              <div style={{ fontFamily:"Georgia,serif", fontSize: isMobile ? 20 : 25, color:"#1c1917", marginBottom:6 }}>Bonjour, <em style={{ color:"#2d5a3d" }}>{userId}</em> 👋</div>
+              <div style={{ fontSize:12, color:"#6b6560", lineHeight:1.65, marginBottom:14, maxWidth:520 }}>{isMobile ? "Posez votre question clinique ci-dessous." : "Posez une question sur n'importe quel sujet clinique — je structure ma réponse en sections : livres, vidéos, Instagram, Facebook, Reddit, recherches, recommandations HAS."}</div>
+              <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap:8 }}>
+                {QUICK_SUGGESTIONS.slice(0, isMobile ? 3 : 4).map((s,i)=><button key={i} onClick={()=>sendMessage(s)} style={{ padding:"11px 14px", background:"#f5f3ee", border:"1px solid #e2ddd5", borderRadius:10, cursor:"pointer", textAlign:"left", fontFamily:"system-ui,sans-serif", fontSize:12, color:"#3a3530", lineHeight:1.5 }} onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.borderColor="#a8cdb5";}} onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ee";e.currentTarget.style.borderColor="#e2ddd5";}}>{s}</button>)}
               </div>
             </div>
           )}
@@ -552,7 +579,7 @@ export default function MindBase() {
               <div style={{ width:32, height:32, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:msg.type==="agent"?15:13, background:msg.type==="agent"?"#eaf3ee":"#f0ede6", color:msg.type==="agent"?"#2d5a3d":"#6b6560", border:"1px solid #e2ddd5", fontFamily:"Georgia,serif", marginTop:1 }}>
                 {msg.type==="agent"?"M":msg.type==="error"?"⚠":"👤"}
               </div>
-              <div style={{ maxWidth:"78%" }}>
+              <div style={{ maxWidth: isMobile ? "95%" : "78%" }}>
                 {msg.meta&&<div style={{ fontSize:10, color:"#a09a93", marginBottom:4 }}>{msg.meta}</div>}
                 <div style={{ padding:"12px 16px", borderRadius:14, background:msg.type==="user"?"#2d5a3d":msg.type==="error"?"#fceaea":"#fff", color:msg.type==="user"?"#fff":msg.type==="error"?"#8b2020":"#1c1917", border:msg.type==="user"?"none":`1px solid ${msg.type==="error"?"#f09595":"#e2ddd5"}`, borderTopLeftRadius:msg.type!=="user"?4:14, borderTopRightRadius:msg.type==="user"?4:14 }}>
                   {msg.type==="user"?<span style={{ fontSize:13 }}>{msg.text}</span>:msg.type==="error"?<span style={{ fontSize:13 }}>Erreur : {msg.text}</span>:parseContent(msg.text)}
@@ -575,13 +602,13 @@ export default function MindBase() {
           <div style={{ height:10 }} />
         </div>
 
-        <div style={{ padding:"14px 24px 18px", background:"#fff", borderTop:"1px solid #e2ddd5" }}>
-          <div style={{ display:"flex", gap:8, background:"#f0ede6", border:"1px solid #cec9bf", borderRadius:14, padding:"6px 6px 6px 16px" }}>
-            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage(input);}}} placeholder="Ex : ressources TDAH adulte, livres dépression Fnac, recommandations HAS 2024..." disabled={loading} style={{ flex:1, border:"none", background:"none", fontSize:13, color:"#1c1917", outline:"none", fontFamily:"system-ui,sans-serif" }} />
+        <div style={{ padding: isMobile ? "10px 12px 14px" : "14px 24px 18px", background:"#fff", borderTop:"1px solid #e2ddd5" }}>
+          <div style={{ display:"flex", gap:8, background:"#f0ede6", border:"1px solid #cec9bf", borderRadius:14, padding:"6px 6px 6px 14px" }}>
+            <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage(input);}}} placeholder={isMobile ? "Posez votre question..." : "Ex : ressources TDAH adulte, livres dépression Fnac..."} disabled={loading} style={{ flex:1, border:"none", background:"none", fontSize: isMobile ? 14 : 13, color:"#1c1917", outline:"none", fontFamily:"system-ui,sans-serif" }} />
             <button onClick={()=>setAnalyseOpen(true)} title="Analyser PDFs et liens" style={{ padding:"8px 10px", background:"#f0ede6", border:"1px solid #cec9bf", borderRadius:10, fontSize:16, cursor:"pointer", flexShrink:0, color:"#6b6560" }}>📎</button>
-            <button onClick={()=>sendMessage(input)} disabled={loading||!input.trim()} style={{ padding:"8px 18px", background:loading||!input.trim()?"#cec9bf":"#2d5a3d", color:"#fff", border:"none", borderRadius:10, fontSize:13, cursor:loading||!input.trim()?"not-allowed":"pointer", fontWeight:500, fontFamily:"system-ui,sans-serif", flexShrink:0 }}>{loading?"…":"Envoyer →"}</button>
+            <button onClick={()=>sendMessage(input)} disabled={loading||!input.trim()} style={{ padding: isMobile ? "8px 12px" : "8px 18px", background:loading||!input.trim()?"#cec9bf":"#2d5a3d", color:"#fff", border:"none", borderRadius:10, fontSize:13, cursor:loading||!input.trim()?"not-allowed":"pointer", fontWeight:500, fontFamily:"system-ui,sans-serif", flexShrink:0 }}>{loading?"…": isMobile ? "→" : "Envoyer →"}</button>
           </div>
-          <div style={{ fontSize:11, color:"#a09a93", marginTop:7, textAlign:"center" }}>HAS · ANSM · Inserm · OMS · PubMed · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac</div>
+          {!isMobile && <div style={{ fontSize:11, color:"#a09a93", marginTop:7, textAlign:"center" }}>HAS · ANSM · Inserm · OMS · PubMed · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac</div>}
         </div>
       </div>
       <style>{`@keyframes blink{0%,60%,100%{opacity:0.3;transform:scale(0.85)}30%{opacity:1;transform:scale(1)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*::-webkit-scrollbar{width:4px}*::-webkit-scrollbar-thumb{background:#cec9bf;border-radius:2px}`}</style>
