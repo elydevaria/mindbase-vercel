@@ -1,9 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 
-// ── Change this to your Railway backend URL after deploying ────────
-const API = "";  // Same domain on Vercel — no config needed
+const API = "";
 
-// ── Simple user ID (stored in localStorage) ───────────────────────
 function getUserId() {
   let id = localStorage.getItem("mindbase_user_id");
   if (!id) { id = "user_" + Math.random().toString(36).slice(2); localStorage.setItem("mindbase_user_id", id); }
@@ -44,30 +42,45 @@ function TagPill({ tag, onRemove, small }) {
   );
 }
 
-function parseContent(text) {
-  return text.split("\n").map((line, i) => {
-    const t = line.trim();
-    if (!t) return <div key={i} style={{ height:5 }} />;
-    if (t.startsWith("### ")) return <div key={i} style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:"#2d5a3d", marginTop:18, marginBottom:7, paddingBottom:5, borderBottom:"1px solid #e2ddd5" }}>{t.slice(4)}</div>;
-    if (t.startsWith("## ")) return <div key={i} style={{ fontSize:14, fontWeight:600, color:"#1c1917", marginTop:12, marginBottom:4 }}>{t.slice(3)}</div>;
-    if (t.startsWith("- ") || t.startsWith("• ")) return <div key={i} style={{ display:"flex", gap:8, padding:"3px 0 3px 10px", borderLeft:"2px solid #a8cdb5", margin:"3px 0" }}><span style={{ fontSize:12, color:"#3a3530", lineHeight:1.65, flex:1 }}>{renderInline(t.slice(2))}</span></div>;
-    if (/^\d+\.\s/.test(t)) return <div key={i} style={{ fontSize:12, color:"#3a3530", lineHeight:1.65, paddingLeft:8, margin:"2px 0" }}>{renderInline(t)}</div>;
-    return <div key={i} style={{ fontSize:13, color:"#1c1917", lineHeight:1.75, marginBottom:1 }}>{renderInline(t)}</div>;
-  });
-}
-
 function renderInline(text) {
   const parts = [];
-  const re = /(\*\*(.*?)\*\*)|(https?:\/\/[^\s\)]+)/g;
+  const re = /(\*\*(.*?)\*\*)|(https?:\/\/[^\s\)\]>]+)/g;
   let last = 0, m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(<span key={last}>{text.slice(last, m.index)}</span>);
-    if (m[1]) parts.push(<strong key={m.index}>{m[2]}</strong>);
-    else parts.push(<a key={m.index} href={m[0]} target="_blank" rel="noopener noreferrer" style={{ color:"#2d5a3d", fontSize:11, wordBreak:"break-all", borderBottom:"1px solid #a8cdb5", textDecoration:"none" }}>🔗 {m[0]}</a>);
+    if (m[1]) {
+      parts.push(<strong key={m.index}>{m[2]}</strong>);
+    } else {
+      const url = m[0].replace(/[\)\]>.,;:!?]+$/, "");
+      parts.push(
+        <a key={m.index} href={url} target="_blank" rel="noopener noreferrer"
+          style={{ color:"#2d5a3d", fontSize:11, wordBreak:"break-all", borderBottom:"1px solid #a8cdb5", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:3 }}>
+          🔗 {url}
+        </a>
+      );
+    }
     last = re.lastIndex;
   }
   if (last < text.length) parts.push(<span key={last}>{text.slice(last)}</span>);
   return parts.length ? parts : text;
+}
+
+function parseContent(text) {
+  return text.split("\n").map((line, i) => {
+    const t = line.trim();
+    if (!t) return <div key={i} style={{ height:5 }} />;
+    if (t.startsWith("### "))
+      return <div key={i} style={{ fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.07em", color:"#2d5a3d", marginTop:18, marginBottom:7, paddingBottom:5, borderBottom:"1px solid #e2ddd5" }}>{renderInline(t.slice(4))}</div>;
+    if (t.startsWith("## "))
+      return <div key={i} style={{ fontSize:14, fontWeight:600, color:"#1c1917", marginTop:12, marginBottom:4 }}>{renderInline(t.slice(3))}</div>;
+    if (t.startsWith("# "))
+      return <div key={i} style={{ fontSize:15, fontWeight:600, color:"#1c1917", marginTop:12, marginBottom:6 }}>{renderInline(t.slice(2))}</div>;
+    if (t.startsWith("- ") || t.startsWith("• "))
+      return <div key={i} style={{ display:"flex", gap:8, padding:"3px 0 3px 10px", borderLeft:"2px solid #a8cdb5", margin:"3px 0" }}><span style={{ fontSize:12, color:"#3a3530", lineHeight:1.65, flex:1 }}>{renderInline(t.slice(2))}</span></div>;
+    if (/^\d+\.\s/.test(t))
+      return <div key={i} style={{ fontSize:12, color:"#3a3530", lineHeight:1.65, paddingLeft:8, margin:"2px 0" }}>{renderInline(t)}</div>;
+    return <div key={i} style={{ fontSize:13, color:"#1c1917", lineHeight:1.75, marginBottom:1 }}>{renderInline(t)}</div>;
+  });
 }
 
 function SaveModal({ message, onSave, onClose }) {
@@ -179,7 +192,7 @@ function AnalyseModal({ onAnalyse, onClose }) {
           <div style={{ fontFamily:"Georgia,serif", fontSize:19, color:"#1c1917" }}>Analyser des ressources</div>
           <button onClick={onClose} style={{ border:"none", background:"none", fontSize:20, cursor:"pointer", color:"#a09a93" }}>×</button>
         </div>
-        <div style={{ fontSize:12, color:"#6b6560", marginBottom:20, lineHeight:1.6 }}>Ajoutez des PDFs, des liens web, ou les deux. MindBase analysera tout ensemble.</div>
+        <div style={{ fontSize:12, color:"#6b6560", marginBottom:20, lineHeight:1.6 }}>Ajoutez des PDFs, des liens web, ou les deux.</div>
         <div style={{ marginBottom:18 }}>
           <div style={{ fontSize:11, color:"#a09a93", textTransform:"uppercase", letterSpacing:"0.06em", fontWeight:500, marginBottom:8 }}>🔗 Liens web</div>
           {urls.map((url,i)=>(
@@ -235,7 +248,7 @@ export default function MindBase() {
 
   async function loadLibrary() {
     try {
-      const res = await fetch(`${API}/api/library/${userId}`);
+      const res = await fetch(`${API}/api/library?userId=${userId}`);
       const data = await res.json();
       setLibrary(data.items || []);
     } catch(e) { setLibrary([]); }
@@ -259,7 +272,7 @@ export default function MindBase() {
 
   async function deleteFromLibrary(id) {
     try {
-      await fetch(`${API}/api/library/${id}`, { method:"DELETE" });
+      await fetch(`${API}/api/library?id=${id}`, { method:"DELETE" });
       setLibrary(l=>l.filter(i=>i.id!==id));
     } catch(e) {}
   }
@@ -315,7 +328,6 @@ export default function MindBase() {
       {showLibrary && <LibraryView items={library} onClose={()=>setShowLibrary(false)} onDelete={deleteFromLibrary} />}
       {analyseOpen && <AnalyseModal onAnalyse={handleAnalyse} onClose={()=>setAnalyseOpen(false)} />}
 
-      {/* Sidebar */}
       <aside style={{ width:220, background:"#fff", borderRight:"1px solid #e2ddd5", display:"flex", flexDirection:"column", flexShrink:0 }}>
         <div style={{ padding:"20px 18px 16px", borderBottom:"1px solid #e2ddd5" }}>
           <div style={{ fontFamily:"Georgia,serif", fontSize:22, color:"#2d5a3d" }}>MindBase</div>
@@ -341,7 +353,6 @@ export default function MindBase() {
         </div>
       </aside>
 
-      {/* Chat */}
       <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
         <div ref={chatRef} style={{ flex:1, overflowY:"auto", padding:"22px 24px 0", display:"flex", flexDirection:"column", gap:14 }}>
           {messages.length===0 && (
