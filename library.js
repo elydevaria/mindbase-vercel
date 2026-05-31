@@ -40,6 +40,7 @@ export default async function handler(req, res) {
     if (method === "POST") {
       const { userId, title, tags, note, content } = body;
       if (!userId || !title || !content) return res.status(400).json({ error: "Missing fields" });
+
       const data = await supa("library", "POST", {
         user_id: userId,
         title,
@@ -47,7 +48,13 @@ export default async function handler(req, res) {
         note: note || "",
         content,
       });
-      return res.json({ item: Array.isArray(data) ? data[0] : data });
+
+      // Supabase returns array on success, object with message on error
+      if (data && data.message) return res.status(400).json({ error: data.message });
+      if (data && data.code) return res.status(400).json({ error: `Supabase error: ${data.message || data.code}` });
+
+      const item = Array.isArray(data) ? data[0] : data;
+      return res.json({ item: item || { success: true } });
     }
 
     // DELETE /api/library?id=xxx
