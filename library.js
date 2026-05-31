@@ -20,11 +20,19 @@ export default async function handler(req, res) {
   const { method, query, body } = req;
 
   try {
-    // GET /api/library?userId=xxx
+    // GET /api/library?userId=xxx — fetch library
+    // GET /api/library?userId=xxx&check=1 — check if username exists
     if (method === "GET") {
-      const { userId } = query;
+      const { userId, check } = query;
       if (!userId) return res.status(400).json({ error: "userId required" });
-      const data = await supa(`library?user_id=eq.${userId}&order=created_at.desc`);
+
+      if (check === "1") {
+        // Check if this userId has any saved items (i.e. username is taken)
+        const data = await supa(`library?user_id=eq.${encodeURIComponent(userId)}&limit=1&select=id`);
+        return res.json({ exists: Array.isArray(data) && data.length > 0 });
+      }
+
+      const data = await supa(`library?user_id=eq.${encodeURIComponent(userId)}&order=created_at.desc`);
       return res.json({ items: Array.isArray(data) ? data : [] });
     }
 
@@ -32,7 +40,13 @@ export default async function handler(req, res) {
     if (method === "POST") {
       const { userId, title, tags, note, content } = body;
       if (!userId || !title || !content) return res.status(400).json({ error: "Missing fields" });
-      const data = await supa("library", "POST", { user_id: userId, title, tags: tags || [], note: note || "", content });
+      const data = await supa("library", "POST", {
+        user_id: userId,
+        title,
+        tags: tags || [],
+        note: note || "",
+        content,
+      });
       return res.json({ item: Array.isArray(data) ? data[0] : data });
     }
 
