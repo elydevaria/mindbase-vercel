@@ -266,6 +266,49 @@ export default async function handler(req, res) {
   try {
     const q = await generateSearchQueries(lastMessage);
 
+    // ── Mistral decides which sections to search ─────────────────
+    let intentSections = [];
+    try {
+      const intentRes = await fetch(MISTRAL_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          max_tokens: 80,
+          temperature: 0,
+          messages: [{
+            role: "system",
+            content: `Tu es un assistant pour praticiens en santé mentale français.
+Les sections disponibles sont : protocols, pubmed, books, videos, instagram, facebook, linkedin, reddit, forums.
+Décide quelles sections sont pertinentes pour la question posée.
+Réponds UNIQUEMENT avec un tableau JSON. Exemples :
+- Question générale ou "ressources complètes" → toutes les sections
+- Question sur livres → ["books"]
+- Question sur Instagram → ["instagram"]
+- Question clinique sur un trouble/traitement → au minimum ["protocols", "pubmed"]
+- Question sur communautés → ["reddit", "forums", "facebook"]`
+          }, {
+            role: "user",
+            content: lastMessage
+          }]
+        }),
+      });
+      const intentData = await intentRes.json();
+      const intentText = intentData.choices?.[0]?.message?.content || "[]";
+      const jsonMatch = intentText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) intentSections = JSON.parse(jsonMatch[0]);
+    } catch (e) {
+      intentSections = [];
+    }
+
+    const isGeneral = intentSections.length === 0;
+    const has = (s) => isGeneral || intentSections.includes(s);
+    const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
+
+    // ── Run only relevant searches in parallel ────────────────────
     const [
       recommendations,
       pubmed,
@@ -277,42 +320,33 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
-
-      // 1 — Recommendations + protocols, bilingual, multi-source
-      braveSearch(
+      has("protocols") ? braveSearch(
         `${q.recommendations} (site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
-        6
-      ),
-
-      // 0 credits — PubMed direct API, filters obituaries
-      pubmedSearch(q.pubmed_cited, q.pubmed_recent),
-
-      // 1 — Books
-      braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`),
-
-      // 1 video credit
-      braveVideoSearch(q.videos),
-
-      // 0 (OAuth) or 1 (Brave fallback)
-      redditSearch(q.reddit_fr, q.reddit_en),
-
-      // 1 — Instagram: RESTORED to old working approach
-      // site:instagram.com + natural language query finds popular accounts reliably
-      braveSearch(`site:instagram.com ${q.instagram}`, 6),
-
-      // 1 — Facebook groups
-      braveSearch(`site:facebook.com ${q.facebook} groupe`, 5),
-
-      braveSearch(`site:linkedin.com/in ${q.linkedin}`, 6),
-
-      // 1 — French professional forums and medical discussions
-      // Broad search — no strict site: restrictions which cause empty results
-      // Uses natural language to find actual forum discussions and communities
-      braveSearch(
-        `${q.forums} forum OR discussion OR communauté OR "fil de discussion" france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:youtube.com`,
-        5
-      ),
-
+        baseCount
+      ) : Promise.resolve(""),
+      has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
+      has("books") ? braveSearch(
+        `${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("videos") ? braveVideoSearch(q.videos, baseCount) : Promise.resolve(""),
+      has("reddit") ? redditSearch(q.reddit_fr, q.reddit_en) : Promise.resolve(""),
+      has("instagram") ? braveSearch(
+        `site:instagram.com ${q.instagram}`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("facebook") ? braveSearch(
+        `site:facebook.com ${q.facebook} groupe`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("linkedin") ? braveSearch(
+        `${q.linkedin} (site:linkedin.com/in OR "profil linkedin")`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("forums") ? braveSearch(
+        `${q.forums} forum OR discussion OR communauté france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:youtube.com`,
+        baseCount
+      ) : Promise.resolve(""),
     ]);
 
     const sections = [
