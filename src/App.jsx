@@ -88,45 +88,48 @@ function parseContent(text) {
 // ─── PDF download ─────────────────────────────────────────────────
 function downloadAsPdf(text, title) {
   const cleanTitle = title.replace(/[#*📚▶️📸👥💬🔗🐦🔬📄📋]/g, "").trim().slice(0, 50);
-  
+
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>${cleanTitle}</title>
 <style>
-  @media print { .no-print { display: none !important; } }
+  @media print { .no-print { display: none !important; } @page { margin: 20mm; } }
   body { font-family: Georgia, serif; max-width: 750px; margin: 40px auto; color: #1c1917; line-height: 1.7; font-size: 13px; }
   h1 { font-size: 18px; color: #2d5a3d; border-bottom: 2px solid #2d5a3d; padding-bottom: 8px; margin-bottom: 20px; }
   .section { font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #2d5a3d; margin-top: 20px; margin-bottom: 6px; border-bottom: 1px solid #e2ddd5; padding-bottom: 4px; }
   .item { margin: 6px 0 6px 12px; border-left: 2px solid #a8cdb5; padding-left: 8px; }
   a { color: #2d5a3d; }
   .footer { margin-top: 40px; font-size: 11px; color: #a09a93; border-top: 1px solid #e2ddd5; padding-top: 10px; }
-  .print-btn { position: fixed; top: 20px; right: 20px; padding: 10px 20px; background: #2d5a3d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .print-btn { display: block; margin: 0 auto 24px; padding: 10px 24px; background: #2d5a3d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-family: system-ui, sans-serif; }
 </style></head><body>
-<button class="print-btn no-print" onclick="window.print()">📄 Enregistrer en PDF</button>
+<button class="print-btn no-print" onclick="window.print()">📄 Enregistrer en PDF (Ctrl+P → Enregistrer en PDF)</button>
 <h1>MindBase — ${cleanTitle}</h1>
 ${text.split("\n").map(line => {
   const t = line.trim();
   if (!t) return "<br>";
-  if (t.startsWith("### ")) return `<div class="section">${t.slice(4)}</div>`;
-  if (t.startsWith("## ")) return `<h2 style="font-size:15px;color:#1c1917">${t.slice(3)}</h2>`;
-  if (t.startsWith("- ") || t.startsWith("• ")) return `<div class="item">${t.slice(2).replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</div>`;
-  return `<p style="margin:3px 0">${t.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</p>`;
+  if (t.startsWith("### ")) return \`<div class="section">\${t.slice(4)}</div>\`;
+  if (t.startsWith("## ")) return \`<h2 style="font-size:15px;color:#1c1917">\${t.slice(3)}</h2>\`;
+  if (t.startsWith("- ") || t.startsWith("• ")) return \`<div class="item">\${t.slice(2).replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</div>\`;
+  return \`<p style="margin:3px 0">\${t.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</p>\`;
 }).join("\n")}
 <div class="footer">Généré par MindBase · ${new Date().toLocaleDateString("fr-FR", { day:"numeric", month:"long", year:"numeric" })}</div>
 </body></html>`;
 
-  // Use blob URL — opens in new tab without touching parent window state
-  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.target = "_blank";
-  a.rel = "noopener noreferrer";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  // Revoke after delay to ensure tab has loaded
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  // Write into a hidden iframe — never touches parent window, no focus loss, no React re-render
+  const iframe = document.createElement("iframe");
+  iframe.style.cssText = "position:fixed;width:0;height:0;border:0;opacity:0;";
+  document.body.appendChild(iframe);
+  iframe.contentDocument.open();
+  iframe.contentDocument.write(html);
+  iframe.contentDocument.close();
+  // Small delay to let iframe render, then print from it
+  setTimeout(() => {
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+    // Remove iframe after print dialog closes
+    setTimeout(() => document.body.removeChild(iframe), 2000);
+  }, 500);
 }
+
 // ─── Username modal ───────────────────────────────────────────────
 function UsernameModal({ onConfirm }) {
   const [step, setStep] = useState("choose"); // choose | login
