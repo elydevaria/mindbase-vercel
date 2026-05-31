@@ -190,7 +190,6 @@ Génère des requêtes optimisées. Règles importantes :
 - Pour PubMed : anglais médical précis avec termes MeSH si possible
 - Pour Instagram : requête naturelle pour trouver des COMPTES POPULAIRES francophones sur ce sujet (praticiens, associations, pages de sensibilisation)
 - Pour forums : pense aux forums médicaux français (Doctissimo, Psychologies, forums professionnels de psychiatrie/psychologie)
-- Pour LinkedIn KOL : noms de psychiatres/psychologues français très connus du grand public (présents dans médias, auteurs de bestsellers, conférenciers) + "linkedin"
 
 Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
 {
@@ -201,7 +200,7 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
   "forums": "requête pour forums médicaux et discussions professionnelles françaises sur ce sujet (hors Reddit)",
   "instagram": "terme médical principal en français pour trouver des comptes Instagram sur ce sujet — terme court et simple, juste le sujet médical (ex: TDAH, dépression, anxiété, autisme) sans rôle professionnel",
   "facebook": "requête pour groupes Facebook francophones sur ce sujet",
-  "linkedin_kol": "noms de 2-3 psychiatres/psychologues français très connus du grand public sur ce sujet + 'linkedin' — ex: 'Christophe André psychiatre linkedin' ou 'Boris Cyrulnik linkedin'",
+  "linkedin": "terme médical principal en français pour trouver des profils LinkedIn de praticiens sur ce sujet — terme court et simple comme le sujet médical (ex: TDAH, dépression, anxiété)",
   "recommendations": "requête bilingue pour recommandations ET protocoles — termes FR ET EN avec OR pour couvrir HAS + NICE + Cochrane + APA",
   "pubmed_cited": "requête PubMed anglais avec termes MeSH pour méta-analyses et systematic reviews (ex: 'ADHD[MeSH] meta-analysis systematic review')",
   "pubmed_recent": "requête PubMed anglais pour RCTs et études cliniques récentes 2022-2025",
@@ -223,7 +222,7 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
       forums: `${t} forum discussion professionnel france`,
       instagram: t,
       facebook: `${t} groupe facebook france`,
-      linkedin_kol: `${t} psychiatre psychologue france linkedin`,
+      linkedin: t,
       recommendations: `${t} recommandations HAS OR guidelines NICE OR Cochrane review`,
       pubmed_cited: `${t} meta-analysis systematic review`,
       pubmed_recent: `${t} randomized controlled trial 2023 2024`,
@@ -251,7 +250,8 @@ FORMAT — dans cet ordre, sections pertinentes uniquement :
 
 Pour Articles les plus cités : affiche MINIMUM 5 articles tagués [Très cité], [Récent] ou [Cité + Récent].
 Pour LinkedIn KOL : indique pourquoi ils sont influents (auteur de X, présent dans médias, etc.).
-Pour Instagram : affiche les comptes avec leur handle (@compte) et description.
+Pour Instagram : affiche EXACTEMENT le titre tel qu'il apparaît dans les résultats (ex: "Alice ♡ La Mini Coach TDAH") ET le handle (@username) sur la même ligne, puis la description et l'URL. Ne raccourcis jamais le nom du compte.
+Pour LinkedIn : affiche le nom complet, titre et institution de la personne.
 Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français.
 Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max.
 Couvre TOUTES les sections disponibles. Outil d'aide décisionnelle uniquement.`;
@@ -303,8 +303,7 @@ export default async function handler(req, res) {
       // 1 — Facebook groups
       braveSearch(`site:facebook.com ${q.facebook} groupe`, 5),
 
-      // 1 — LinkedIn KOLs by name + external reputation
-      braveSearch(`${q.linkedin_kol} (site:linkedin.com/in OR "profil linkedin")`, 5),
+      braveSearch(`site:linkedin.com/in ${q.linkedin}`, 6),
 
       // 1 — French professional forums, max 5, no social media
       braveSearch(
