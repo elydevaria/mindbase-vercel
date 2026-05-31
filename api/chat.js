@@ -54,51 +54,31 @@ async function braveVideoSearch(query, count = 4) {
   } catch (e) { return ""; }
 }
 
-// ─── PubMed API — free, no key needed ────────────────────────────
-// Searches both most-cited (via sort=relevance which PubMed weights by citations)
-// and most-recent separately, then merges and deduplicates
-async function pubmedSearch(query) {
+// ─── PubMed API — free, no Brave credits ─────────────────────────
+async function pubmedSearch(citedQuery, recentQuery) {
   try {
-    const encoded = encodeURIComponent(query);
     const base = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils`;
-
-    // Run two searches: most relevant (citation-weighted) + most recent
     const [relevantRes, recentRes] = await Promise.all([
-      fetch(`${base}/esearch.fcgi?db=pubmed&term=${encoded}&retmax=5&sort=relevance&retmode=json`),
-      fetch(`${base}/esearch.fcgi?db=pubmed&term=${encoded}&retmax=4&sort=pub+date&retmode=json&datetype=pdat&reldate=730`),
+      fetch(`${base}/esearch.fcgi?db=pubmed&term=${encodeURIComponent(citedQuery)}&retmax=5&sort=relevance&retmode=json`),
+      fetch(`${base}/esearch.fcgi?db=pubmed&term=${encodeURIComponent(recentQuery)}&retmax=4&sort=pub+date&retmode=json&datetype=pdat&reldate=730`),
     ]);
-
-    const [relevantData, recentData] = await Promise.all([
-      relevantRes.json(),
-      recentRes.json(),
-    ]);
-
-    // Merge IDs, deduplicate, keep max 7
+    const [relevantData, recentData] = await Promise.all([relevantRes.json(), recentRes.json()]);
     const relevantIds = relevantData?.esearchresult?.idlist || [];
     const recentIds = recentData?.esearchresult?.idlist || [];
-    const allIds = [...new Set([...relevantIds, ...recentIds])].slice(0, 7);
-
+    const allIds = [...new Set([...relevantIds, ...recentIds])].slice(0, 8);
     if (!allIds.length) return "";
-
-    // Fetch summaries for all IDs
-    const summaryRes = await fetch(
-      `${base}/esummary.fcgi?db=pubmed&id=${allIds.join(",")}&retmode=json`
-    );
+    const summaryRes = await fetch(`${base}/esummary.fcgi?db=pubmed&id=${allIds.join(",")}&retmode=json`);
     const summaryData = await summaryRes.json();
-    const uids = summaryData?.result?.uids || [];
-
-    return uids.map(id => {
-      const paper = summaryData.result[id];
-      if (!paper) return null;
-      const authors = (paper.authors || []).slice(0, 3).map(a => a.name).join(", ");
-      const year = paper.pubdate?.slice(0, 4) || "";
-      const journal = paper.fulljournalname || paper.source || "";
-      const isCited = relevantIds.includes(id);
-      const isRecent = recentIds.includes(id);
-      const tag = isCited && isRecent ? "[Cité + Récent]" : isCited ? "[Très cité]" : "[Récent 2023-2024]";
-      return `Titre: ${tag} ${paper.title}\nURL: https://pubmed.ncbi.nlm.nih.gov/${id}/\nExtrait: ${authors}${year ? ` (${year})` : ""} — ${journal}`;
+    return (summaryData?.result?.uids || []).map(id => {
+      const p = summaryData.result[id];
+      if (!p) return null;
+      const authors = (p.authors || []).slice(0, 3).map(a => a.name).join(", ");
+      const year = p.pubdate?.slice(0, 4) || "";
+      const journal = p.fulljournalname || p.source || "";
+      const tag = relevantIds.includes(id) && recentIds.includes(id) ? "[Cité + Récent]"
+        : relevantIds.includes(id) ? "[Très cité]" : "[Récent]";
+      return `Titre: ${tag} ${p.title}\nURL: https://pubmed.ncbi.nlm.nih.gov/${id}/\nExtrait: ${authors}${year ? ` (${year})` : ""} — ${journal}`;
     }).filter(Boolean).join("\n---\n");
-
   } catch (e) { return ""; }
 }
 
@@ -113,8 +93,7 @@ async function getRedditToken() {
     },
     body: "grant_type=client_credentials",
   });
-  const data = await res.json();
-  return data.access_token;
+  return (await res.json()).access_token;
 }
 
 async function redditOAuthSearch(query) {
@@ -152,10 +131,7 @@ async function redditOAuthSearch(query) {
 
 async function redditSearch(queryFr, queryEn) {
   if (REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET) {
-    const [fr, en] = await Promise.all([
-      redditOAuthSearch(queryFr),
-      redditOAuthSearch(queryEn),
-    ]);
+    const [fr, en] = await Promise.all([redditOAuthSearch(queryFr), redditOAuthSearch(queryEn)]);
     const seen = new Set();
     return [...(fr ? fr.split("\n---\n") : []), ...(en ? en.split("\n---\n") : [])]
       .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
@@ -182,7 +158,7 @@ async function generateSearchQueries(userMessage) {
           role: "user",
           content: `Expert recherche web santé mentale française. Question: "${userMessage}"
 
-JSON uniquement, pas de texte avant/après:
+JSON uniquement, sans texte avant/après:
 {
   "books": "requête livres France sur ce sujet",
   "videos": "requête YouTube français sur ce sujet",
@@ -190,13 +166,12 @@ JSON uniquement, pas de texte avant/après:
   "reddit_en": "2-3 mots anglais pour Reddit",
   "instagram": "termes et hashtags Instagram français sur ce sujet",
   "facebook": "noms groupes ou termes Facebook francophones sur ce sujet",
-  "linkedin_kol": "noms de KEY OPINION LEADERS reconnus mondialement sur ce sujet en psychiatrie psychologie — cherche des professeurs, chefs de service, auteurs de guidelines, conférenciers internationaux (ex: Pr. Philip Asherson TDAH, Pr. Franck Bellivier psychiatrie France)",
-  "linkedin_articles": "termes pour articles LinkedIn professionnels sur ce sujet santé mentale France",
-  "forums": "termes pour forums médicaux professionnels FRANÇAIS sur ce sujet — doctissimo.fr, psychologies.com, psycom.org, forum-psychiatrie.fr, forum-tdah.fr, etc.",
-  "protocols": "requête pour protocoles cliniques validés sur ce sujet — cherche: guidelines internationales, manuels de thérapie, échelles d'évaluation, outils cliniques (ex: CBT protocol PTSD, DBT manual borderline)",
-  "pubmed_cited": "requête PubMed anglais pour les études les PLUS CITÉES sur ce sujet — utilise termes MeSH précis (ex: ADHD[MeSH] cognitive behavioral therapy meta-analysis)",
-  "pubmed_recent": "requête PubMed anglais pour études RÉCENTES 2022-2025 sur ce sujet — termes précis",
-  "official": "requête HAS ANSM OMS sur ce sujet",
+  "linkedin_kol": "3-5 NOMS RÉELS de psychiatres ou psychologues FRANÇAIS reconnus sur ce sujet — uniquement PU-PH, chefs de service CHU, auteurs de recommandations HAS, présidents de sociétés savantes (SFPEADA, SPF, AFPDB, SFP). Format: 'Pr/Dr Prénom Nom spécialité' (ex: 'Pr Marie-France Moro psychiatrie transculturelle'). Ces personnes doivent être réellement connues.",
+  "protocols": "requête EN ANGLAIS ET EN FRANÇAIS pour protocoles cliniques validés — cherche simultanément sur HAS (termes français officiels), NICE, Cochrane, APA, WHO. Utilise plusieurs synonymes séparés par OR (ex: 'trouble déficit attention hyperactivité OR TDAH OR ADHD clinical guideline protocol recommandation')",
+  "pubmed_cited": "requête PubMed anglais termes MeSH pour études les plus citées (ex: 'ADHD[MeSH] meta-analysis')",
+  "pubmed_recent": "requête PubMed anglais études récentes 2022-2025",
+  "official": "requête française pour recommandations officielles sur ce sujet — utilise les termes nosologiques français officiels utilisés par la HAS",
+  "forums": "termes précis pour forums médicaux professionnels français sur ce sujet",
   "general": "requête générale praticiens français sur ce sujet"
 }`
         }]
@@ -215,13 +190,12 @@ JSON uniquement, pas de texte avant/après:
       reddit_fr: t, reddit_en: t,
       instagram: `${t} instagram praticien`,
       facebook: `${t} groupe facebook france`,
-      linkedin_kol: `professeur psychiatre ${t} france key opinion leader`,
-      linkedin_articles: `${t} article linkedin santé mentale france`,
-      forums: `${t} forum discussion psychologie psychiatrie france`,
-      protocols: `${t} clinical protocol guidelines therapy manual`,
+      linkedin_kol: `professeur psychiatre psychologue ${t} france CHU`,
+      protocols: `${t} OR ${t} clinical guideline protocole recommandation HAS NICE`,
       pubmed_cited: `${t} meta-analysis systematic review`,
-      pubmed_recent: `${t} treatment 2023 2024 2025`,
-      official: `${t} HAS ANSM recommandations`,
+      pubmed_recent: `${t} treatment 2023 2024`,
+      official: `${t} recommandations HAS ANSM`,
+      forums: `${t} forum psychologie psychiatrie france`,
       general: `${t} santé mentale france praticien`,
     };
   }
@@ -231,11 +205,11 @@ const SYSTEM_PROMPT = `Tu es MindBase, agent clinique expert en santé mentale p
 LANGUE : Français uniquement.
 
 RÈGLE ABSOLUE : Utilise UNIQUEMENT les URLs exactes des résultats fournis. Ne génère jamais d'URL.
-Si section vide : "Rechercher manuellement : [terme exact sur cette plateforme]"
+Si section vide : "Rechercher manuellement : [terme exact]"
 
-FORMAT — dans cet ordre exact, sections pertinentes uniquement :
+FORMAT — dans cet ordre, sections pertinentes uniquement :
 ### 📋 Protocoles & Guidelines
-### 🔬 Recherches clés (articles les plus cités)
+### 🔬 Articles les plus cités
 ### 🔬 Recherches récentes (2022-2025)
 ### 📄 Recommandations officielles
 ### 📚 Livres
@@ -243,13 +217,13 @@ FORMAT — dans cet ordre exact, sections pertinentes uniquement :
 ### 🔗 LinkedIn — Key Opinion Leaders
 ### 📸 Instagram
 ### 👥 Facebook
-### 💬 Reddit & Forums
+### 💬 Reddit
+### 💬 Forums professionnels
 
-Pour LinkedIn KOL : mentionne le titre académique, institution, et pourquoi ils sont une référence sur ce sujet.
-Pour PubMed : indique [Très cité] ou [Récent] selon le tag fourni.
-Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante.
-3 lignes max par ressource. Couvre TOUTES les sections disponibles.
-Outil d'aide décisionnelle uniquement.`;
+Pour LinkedIn KOL : indique titre (Pr./Dr.), institution (CHU/université), spécialité. Ne cite que des profils présents dans les résultats.
+Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français, pas de réseaux sociaux.
+Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max par ressource.
+Couvre TOUTES les sections disponibles. Outil d'aide décisionnelle uniquement.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -261,8 +235,9 @@ export default async function handler(req, res) {
   try {
     const q = await generateSearchQueries(lastMessage);
 
-    // ── Searches — PubMed uses free API (no Brave credits) ────────
-    // Brave credits used: max 8 (7 if Reddit OAuth set)
+    // ── Max 8 Brave credits (7 if Reddit OAuth) ───────────────────
+    // LinkedIn articles removed — saves 1 credit
+    // Protocols uses broad multi-source query instead of HAS-specific
     const [
       protocols,
       pubmed,
@@ -276,44 +251,51 @@ export default async function handler(req, res) {
       forums,
       general,
     ] = await Promise.all([
-      // 1 — Protocols: clinical guidelines, therapy manuals, evaluation tools
+
+      // 1 — Protocols: broad search across ALL trusted clinical sources
+      // No single HAS query — instead searches HAS + NICE + Cochrane + APA + WHO simultaneously
+      // Uses both French AND English terms so nothing is missed
       braveSearch(
-        `${q.protocols} (site:has-sante.fr OR site:nice.org.uk OR site:apa.org OR site:who.int OR clinical protocol guidelines "evidence-based")`,
+        `(${q.protocols}) (site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:sfpeada.fr OR site:inserm.fr)`,
+        6
+      ),
+
+      // 0 credits — PubMed direct API, cited + recent
+      pubmedSearch(q.pubmed_cited, q.pubmed_recent),
+
+      // 1 — Official guidelines: broad French nosological terms across HAS/ANSM/Inserm
+      // Uses official French diagnostic terminology to match HAS document titles
+      braveSearch(
+        `${q.official} (site:has-sante.fr OR site:ansm.sante.fr OR site:inserm.fr OR site:who.int)`,
         5
       ),
 
-      // 0 Brave credits — PubMed direct API, both cited + recent
-      pubmedSearch(`(${q.pubmed_cited}) OR (${q.pubmed_recent})`),
-
-      // 1 — Official French/EU guidelines
-      braveSearch(`${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int OR site:ema.europa.eu`, 4),
-
-      // 1 — Books on French bookstore sites
+      // 1 — Books
       braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`),
 
-      // 1 video credit — YouTube
+      // 1 video credit
       braveVideoSearch(q.videos),
 
-      // 0 (OAuth) or 1 (Brave fallback) — Reddit
+      // 0 (OAuth) or 1 (Brave fallback)
       redditSearch(q.reddit_fr, q.reddit_en),
 
       // 1 — Instagram
-      braveSearch(`instagram.com ${q.instagram}`, 5),
+      braveSearch(`instagram.com ${q.instagram}`, 4),
 
-      // 1 — Facebook groups
+      // 1 — Facebook
       braveSearch(`site:facebook.com groups ${q.facebook}`, 4),
 
-      // 1 — LinkedIn: KOLs + articles
-      // Target linkedin.com/in for profiles and linkedin.com/pulse for articles
+      // 1 — LinkedIn KOLs: search named experts, not generic site: search
+      // Searching name + specialty finds their actual indexed public profiles
       braveSearch(
-        `(site:linkedin.com/in ${q.linkedin_kol} psychiatre OR psychologue OR professeur) OR (site:linkedin.com/pulse ${q.linkedin_articles})`,
-        6
+        `(${q.linkedin_kol}) "linkedin.com" (psychiatre OR psychologue OR "PU-PH" OR "chef de service" OR "professeur")`,
+        5
       ),
 
-      // 1 — Professional French forums only, exclude social media
+      // 1 — French professional forums only, max 5, no social media
       braveSearch(
-        `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:sante.journaldesfemmes.fr OR "forum" psychologie psychiatrie "santé mentale" france) -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com`,
-        6
+        `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:soignants.com OR site:infirmiers.com OR site:jim.fr OR "forum" psychiatrie psychologie france) -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com`,
+        5
       ),
 
       // 1 — General
@@ -321,12 +303,12 @@ export default async function handler(req, res) {
     ]);
 
     const sections = [
-      protocols  && `[PROTOCOLES & GUIDELINES CLINIQUES]\n${protocols}`,
+      protocols  && `[PROTOCOLES & GUIDELINES — HAS / NICE / Cochrane / APA / WHO]\n${protocols}`,
       pubmed     && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
-      official   && `[RECOMMANDATIONS OFFICIELLES]\n${official}`,
+      official   && `[RECOMMANDATIONS OFFICIELLES — HAS / ANSM / Inserm]\n${official}`,
       books      && `[LIVRES]\n${books}`,
       videos     && `[VIDÉOS YOUTUBE]\n${videos}`,
-      linkedin   && `[LINKEDIN — Key Opinion Leaders & Articles]\n${linkedin}`,
+      linkedin   && `[LINKEDIN — Key Opinion Leaders]\n${linkedin}`,
       instagram  && `[INSTAGRAM]\n${instagram}`,
       facebook   && `[FACEBOOK]\n${facebook}`,
       reddit     && `[REDDIT]\n${reddit}`,
@@ -344,7 +326,7 @@ export default async function handler(req, res) {
 ${sections.join("\n\n===\n\n") || "Aucun résultat."}
 === FIN ===
 
-RAPPEL : URLs exactes uniquement. Respecte l'ordre des sections. 3 lignes max par ressource. Couvre tout.`,
+RAPPEL : URLs exactes uniquement. Respecte l'ordre. Max 5 pour Forums. 3 lignes max par ressource. Couvre tout.`,
       },
     ];
 
