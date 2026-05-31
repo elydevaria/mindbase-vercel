@@ -197,7 +197,7 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
   "videos": "requête courte pour vidéos YouTube français sur ce sujet",
   "reddit_fr": "terme médical français court pour Reddit (2-3 mots)",
   "reddit_en": "terme médical anglais court pour Reddit (2-3 mots)",
-  "forums": "requête pour forums médicaux et discussions professionnelles françaises sur ce sujet (hors Reddit)",
+  "forums": "requête courte et directe pour trouver des discussions et forums français sur ce sujet — utilise le terme médical principal + mots comme forum, discussion, communauté, association (ex: TDAH adulte forum OR association OR discussion)",
   "instagram": "terme médical principal en français pour trouver des comptes Instagram sur ce sujet — terme court et simple, juste le sujet médical (ex: TDAH, dépression, anxiété, autisme) sans rôle professionnel",
   "facebook": "requête pour groupes Facebook francophones sur ce sujet",
   "linkedin": "terme médical principal en français pour trouver des profils LinkedIn de praticiens sur ce sujet — terme court et simple comme le sujet médical (ex: TDAH, dépression, anxiété)",
@@ -219,7 +219,7 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
       books: `${t} livre amazon fnac france`,
       videos: `${t} youtube français`,
       reddit_fr: t, reddit_en: t,
-      forums: `${t} forum discussion professionnel france`,
+      forums: `${t} forum discussion association france`,
       instagram: t,
       facebook: `${t} groupe facebook france`,
       linkedin: t,
@@ -305,9 +305,11 @@ export default async function handler(req, res) {
 
       braveSearch(`site:linkedin.com/in ${q.linkedin}`, 6),
 
-      // 1 — French professional forums, max 5, no social media
+      // 1 — French professional forums and medical discussions
+      // Broad search — no strict site: restrictions which cause empty results
+      // Uses natural language to find actual forum discussions and communities
       braveSearch(
-        `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:soignants.com OR site:infirmiers.com OR site:jim.fr OR "forum" psychiatrie psychologie france) -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com`,
+        `${q.forums} forum OR discussion OR communauté OR "fil de discussion" france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:youtube.com`,
         5
       ),
 
