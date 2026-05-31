@@ -199,7 +199,7 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
   "reddit_fr": "terme médical français court pour Reddit (2-3 mots)",
   "reddit_en": "terme médical anglais court pour Reddit (2-3 mots)",
   "forums": "requête pour forums médicaux et discussions professionnelles françaises sur ce sujet (hors Reddit)",
-  "instagram": "requête naturelle site:instagram.com pour trouver comptes populaires francophones sur ce sujet — ex: 'psychologue TDAH France' ou 'psychiatre dépression adulte'",
+  "instagram": "terme médical principal en français pour trouver des comptes Instagram sur ce sujet — terme court et simple, juste le sujet médical (ex: TDAH, dépression, anxiété, autisme) sans rôle professionnel",
   "facebook": "requête pour groupes Facebook francophones sur ce sujet",
   "linkedin_kol": "noms de 2-3 psychiatres/psychologues français très connus du grand public sur ce sujet + 'linkedin' — ex: 'Christophe André psychiatre linkedin' ou 'Boris Cyrulnik linkedin'",
   "recommendations": "requête bilingue pour recommandations ET protocoles — termes FR ET EN avec OR pour couvrir HAS + NICE + Cochrane + APA",
@@ -221,7 +221,7 @@ Réponds UNIQUEMENT avec ce JSON exact, sans texte avant ni après :
       videos: `${t} youtube français`,
       reddit_fr: t, reddit_en: t,
       forums: `${t} forum discussion professionnel france`,
-      instagram: `${t} psychologue psychiatre france`,
+      instagram: t,
       facebook: `${t} groupe facebook france`,
       linkedin_kol: `${t} psychiatre psychologue france linkedin`,
       recommendations: `${t} recommandations HAS OR guidelines NICE OR Cochrane review`,
@@ -298,7 +298,7 @@ export default async function handler(req, res) {
 
       // 1 — Instagram: RESTORED to old working approach
       // site:instagram.com + natural language query finds popular accounts reliably
-      braveSearch(`site:instagram.com ${q.instagram}`, 5),
+      braveSearch(`site:instagram.com ${q.instagram}`, 6),
 
       // 1 — Facebook groups
       braveSearch(`site:facebook.com ${q.facebook} groupe`, 5),
