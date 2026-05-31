@@ -87,20 +87,22 @@ function parseContent(text) {
 
 // ─── PDF download ─────────────────────────────────────────────────
 function downloadAsPdf(text, title) {
+  const cleanTitle = title.replace(/[#*📚▶️📸👥💬🔗🐦🔬📄📋]/g, "").trim().slice(0, 50);
+  
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${title}</title>
+<title>${cleanTitle}</title>
 <style>
-  @media print { body { margin: 0; } .no-print { display: none; } }
+  @media print { .no-print { display: none !important; } }
   body { font-family: Georgia, serif; max-width: 750px; margin: 40px auto; color: #1c1917; line-height: 1.7; font-size: 13px; }
   h1 { font-size: 18px; color: #2d5a3d; border-bottom: 2px solid #2d5a3d; padding-bottom: 8px; margin-bottom: 20px; }
   .section { font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #2d5a3d; margin-top: 20px; margin-bottom: 6px; border-bottom: 1px solid #e2ddd5; padding-bottom: 4px; }
   .item { margin: 6px 0 6px 12px; border-left: 2px solid #a8cdb5; padding-left: 8px; }
   a { color: #2d5a3d; }
   .footer { margin-top: 40px; font-size: 11px; color: #a09a93; border-top: 1px solid #e2ddd5; padding-top: 10px; }
-  .print-btn { position: fixed; top: 20px; right: 20px; padding: 10px 20px; background: #2d5a3d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: system-ui, sans-serif; }
+  .print-btn { position: fixed; top: 20px; right: 20px; padding: 10px 20px; background: #2d5a3d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: system-ui, sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
 </style></head><body>
 <button class="print-btn no-print" onclick="window.print()">📄 Enregistrer en PDF</button>
-<h1>MindBase — ${title}</h1>
+<h1>MindBase — ${cleanTitle}</h1>
 ${text.split("\n").map(line => {
   const t = line.trim();
   if (!t) return "<br>";
@@ -112,11 +114,18 @@ ${text.split("\n").map(line => {
 <div class="footer">Généré par MindBase · ${new Date().toLocaleDateString("fr-FR", { day:"numeric", month:"long", year:"numeric" })}</div>
 </body></html>`;
 
-  // Open in new tab — user clicks "Enregistrer en PDF" button which triggers print dialog
-  // In Chrome/Firefox print dialog, they select "Save as PDF" as destination
-  const win = window.open("", "_blank");
-  win.document.write(html);
-  win.document.close();
+  // Use blob URL — opens in new tab without touching parent window state
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Revoke after delay to ensure tab has loaded
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 // ─── Username modal ───────────────────────────────────────────────
 function UsernameModal({ onConfirm }) {
