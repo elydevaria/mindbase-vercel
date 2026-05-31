@@ -43,15 +43,31 @@ function TagPill({ tag, onRemove, small }) {
 }
 
 function renderInline(text) {
+  // Pre-clean Mistral's nested link artifacts like [[🔗 ](url)url]
+  const cleaned = text
+    .replace(/\[+🔗\s*\]\([^)]+\)/g, "")
+    .replace(/\[+🔗\s*/g, "")
+    .replace(/\]+$/g, "");
+
   const parts = [];
-  const re = /(\*\*(.*?)\*\*)|(https?:\/\/[^\s\)\]>]+)/g;
+  const re = /(\[([^\]]*)\]\((https?:\/\/[^\)]+)\))|(\*\*(.*?)\*\*)|(https?:\/\/[^\s\)\]>"]+)/g;
   let last = 0, m;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(<span key={last}>{text.slice(last, m.index)}</span>);
+
+  while ((m = re.exec(cleaned)) !== null) {
+    if (m.index > last) parts.push(<span key={last}>{cleaned.slice(last, m.index)}</span>);
     if (m[1]) {
-      parts.push(<strong key={m.index}>{m[2]}</strong>);
-    } else {
-      const url = m[0].replace(/[\)\]>.,;:!?]+$/, "");
+      const url = m[3].replace(/[\)\]>.,;:!?]+$/, "");
+      const label = m[2].replace(/🔗\s*/g, "").trim() || url;
+      parts.push(
+        <a key={m.index} href={url} target="_blank" rel="noopener noreferrer"
+          style={{ color:"#2d5a3d", fontSize:12, borderBottom:"1px solid #a8cdb5", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:3 }}>
+          🔗 {label}
+        </a>
+      );
+    } else if (m[4]) {
+      parts.push(<strong key={m.index}>{m[5]}</strong>);
+    } else if (m[6]) {
+      const url = m[6].replace(/[\)\]>.,;:!?]+$/, "");
       parts.push(
         <a key={m.index} href={url} target="_blank" rel="noopener noreferrer"
           style={{ color:"#2d5a3d", fontSize:11, wordBreak:"break-all", borderBottom:"1px solid #a8cdb5", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:3 }}>
@@ -61,8 +77,9 @@ function renderInline(text) {
     }
     last = re.lastIndex;
   }
-  if (last < text.length) parts.push(<span key={last}>{text.slice(last)}</span>);
-  return parts.length ? parts : text;
+
+  if (last < cleaned.length) parts.push(<span key={last}>{cleaned.slice(last)}</span>);
+  return parts.length ? parts : cleaned;
 }
 
 function parseContent(text) {
