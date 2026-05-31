@@ -159,18 +159,30 @@ function UsernameModal({ onConfirm }) {
     setLoading(true);
     setError("");
     try {
-      // Check if username exists in Supabase
-      const res = await fetch(`${API}/api/library?userId=${encodeURIComponent(name)}&check=1`);
-      const data = await res.json();
-      if (data.exists && step === "choose") {
-        setError("Ce nom d'utilisateur est déjà pris. Choisissez-en un autre ou connectez-vous avec ce nom si c'est le vôtre.");
+      // Step 1 — check availability
+      const checkRes = await fetch(`${API}/api/username?name=${encodeURIComponent(name)}`);
+      const checkData = await checkRes.json();
+      if (!checkData.available) {
+        setError("❌ Ce nom d'utilisateur n'est pas disponible. Choisissez-en un autre.");
+        setLoading(false);
+        return;
+      }
+      // Step 2 — register it
+      const regRes = await fetch(`${API}/api/username`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const regData = await regRes.json();
+      if (regData.error) {
+        setError("❌ " + regData.error);
         setLoading(false);
         return;
       }
       setStoredUsername(name);
       onConfirm(name);
     } catch (e) {
-      // If check fails, just proceed — worst case two users share a library
+      // Network error — proceed anyway
       setStoredUsername(name);
       onConfirm(name);
     }
