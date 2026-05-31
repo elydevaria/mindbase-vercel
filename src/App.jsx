@@ -87,42 +87,37 @@ function parseContent(text) {
 
 // ─── PDF download ─────────────────────────────────────────────────
 function downloadAsPdf(text, title) {
-  const clean = text
-    .replace(/#{1,3} /g, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/(https?:\/\/[^\s]+)/g, "$1")
-    .split("\n").filter(Boolean).join("\n");
-
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${title}</title>
 <style>
+  @media print { body { margin: 0; } .no-print { display: none; } }
   body { font-family: Georgia, serif; max-width: 750px; margin: 40px auto; color: #1c1917; line-height: 1.7; font-size: 13px; }
   h1 { font-size: 18px; color: #2d5a3d; border-bottom: 2px solid #2d5a3d; padding-bottom: 8px; margin-bottom: 20px; }
   .section { font-weight: bold; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: #2d5a3d; margin-top: 20px; margin-bottom: 6px; border-bottom: 1px solid #e2ddd5; padding-bottom: 4px; }
   .item { margin: 6px 0 6px 12px; border-left: 2px solid #a8cdb5; padding-left: 8px; }
   a { color: #2d5a3d; }
   .footer { margin-top: 40px; font-size: 11px; color: #a09a93; border-top: 1px solid #e2ddd5; padding-top: 10px; }
+  .print-btn { position: fixed; top: 20px; right: 20px; padding: 10px 20px; background: #2d5a3d; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-family: system-ui, sans-serif; }
 </style></head><body>
+<button class="print-btn no-print" onclick="window.print()">📄 Enregistrer en PDF</button>
 <h1>MindBase — ${title}</h1>
 ${text.split("\n").map(line => {
   const t = line.trim();
   if (!t) return "<br>";
   if (t.startsWith("### ")) return `<div class="section">${t.slice(4)}</div>`;
   if (t.startsWith("## ")) return `<h2 style="font-size:15px;color:#1c1917">${t.slice(3)}</h2>`;
-  if (t.startsWith("- ") || t.startsWith("• ")) return `<div class="item">${t.slice(2).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>')}</div>`;
-  return `<p style="margin:3px 0">${t.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>').replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")}</p>`;
+  if (t.startsWith("- ") || t.startsWith("• ")) return `<div class="item">${t.slice(2).replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</div>`;
+  return `<p style="margin:3px 0">${t.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/(https?:\/\/[^\s]+)/g,'<a href="$1">$1</a>')}</p>`;
 }).join("\n")}
 <div class="footer">Généré par MindBase · ${new Date().toLocaleDateString("fr-FR", { day:"numeric", month:"long", year:"numeric" })}</div>
 </body></html>`;
 
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `mindbase-${title.slice(0, 30).replace(/\s+/g, "-").toLowerCase()}.html`;
-  a.click();
-  URL.revokeObjectURL(url);
+  // Open in new tab — user clicks "Enregistrer en PDF" button which triggers print dialog
+  // In Chrome/Firefox print dialog, they select "Save as PDF" as destination
+  const win = window.open("", "_blank");
+  win.document.write(html);
+  win.document.close();
 }
-
 // ─── Username modal ───────────────────────────────────────────────
 function UsernameModal({ onConfirm }) {
   const [step, setStep] = useState("choose"); // choose | login
