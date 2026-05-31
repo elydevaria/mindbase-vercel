@@ -419,14 +419,18 @@ export default function MindBase() {
         body:JSON.stringify({ userId, title, tags, note, content }),
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      // Reload from Supabase to ensure state matches database
+      // Supabase sometimes returns the item directly or wrapped
+      // Accept any non-error response as success
+      if (data.error) {
+        showToast("Erreur : " + data.error);
+        return;
+      }
       await loadLibrary(userId);
       setSaveTarget(null);
       showToast("✓ Sauvegardé dans la bibliothèque");
     } catch(e) {
       console.error("Save error:", e);
-      showToast("Erreur lors de la sauvegarde — réessayez");
+      showToast("Erreur réseau — vérifiez votre connexion");
     }
   }
 
