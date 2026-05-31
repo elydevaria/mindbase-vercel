@@ -54,7 +54,7 @@ async function braveVideoSearch(query, count = 4) {
   } catch (e) { return ""; }
 }
 
-// ─── Reddit: OAuth if credentials exist, else Brave ───────────────
+// ─── Reddit OAuth or Brave fallback ───────────────────────────────
 async function getRedditToken() {
   const res = await fetch("https://www.reddit.com/api/v1/access_token", {
     method: "POST",
@@ -113,7 +113,6 @@ async function redditSearch(queryFr, queryEn) {
       .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
       .join("\n---\n");
   } else {
-    // Brave fallback — 1 credit
     return braveSearch(`site:reddit.com ${queryFr} OR ${queryEn}`, 5);
   }
 }
@@ -129,7 +128,7 @@ async function generateSearchQueries(userMessage) {
       },
       body: JSON.stringify({
         model: "mistral-small-latest",
-        max_tokens: 400,
+        max_tokens: 500,
         temperature: 0.1,
         messages: [{
           role: "user",
@@ -141,10 +140,11 @@ JSON uniquement, pas de texte avant/après:
   "videos": "requête YouTube français sur ce sujet",
   "reddit_fr": "2-3 mots français pour Reddit",
   "reddit_en": "2-3 mots anglais pour Reddit",
-  "instagram": "hashtags et termes pour Instagram sur ce sujet en français (ex: #TDAH psychologie praticien)",
-  "facebook": "nom de groupes Facebook ou termes pour ce sujet en France",
-  "linkedin": "termes professionnels LinkedIn santé mentale France sur ce sujet",
-  "forums": "termes pour forums médicaux professionnels français sur ce sujet",
+  "instagram": "termes et hashtags Instagram français sur ce sujet (ex: TDAH psychologie praticien)",
+  "facebook": "nom groupes ou termes Facebook francophones sur ce sujet",
+  "linkedin_voices": "nom complet de psychiatres psychologues influents en France sur ce sujet à chercher sur LinkedIn (ex: Dr. Marie Martin psychiatre TDAH)",
+  "linkedin_articles": "termes pour articles LinkedIn professionnels sur ce sujet santé mentale France",
+  "forums": "termes pour forums médicaux professionnels FRANÇAIS spécifiques sur ce sujet — pense à: forum.doctissimo.fr, psychologies.com, forum-psychiatrie.fr, forum.aufeminin.com, association-patients.fr, psycom.org, santepsychique.fr, forum-tdah.fr, etc.",
   "official": "requête HAS ANSM OMS sur ce sujet",
   "research": "requête PubMed Inserm anglais sur ce sujet",
   "general": "requête générale praticiens français sur ce sujet"
@@ -165,10 +165,11 @@ JSON uniquement, pas de texte avant/après:
       reddit_fr: t, reddit_en: t,
       instagram: `${t} instagram praticien`,
       facebook: `${t} groupe facebook france`,
-      linkedin: `${t} linkedin psychologue france`,
-      forums: `${t} forum professionnel france`,
+      linkedin_voices: `psychiatre psychologue ${t} france linkedin`,
+      linkedin_articles: `${t} article linkedin santé mentale france`,
+      forums: `${t} forum discussion psychologie psychiatrie france`,
       official: `${t} HAS ANSM`,
-      research: `${t} treatment pubmed`,
+      research: `${t} treatment pubmed inserm`,
       general: `${t} santé mentale france`,
     };
   }
@@ -184,13 +185,16 @@ FORMAT — inclus toutes les sections qui ont des résultats :
 ### 📚 Livres
 ### ▶️ Vidéos YouTube
 ### 📸 Instagram
-### 👥 Facebook & LinkedIn
+### 👥 Facebook
+### 🔗 LinkedIn
 ### 💬 Reddit & Forums
 ### 🔬 Recherches récentes
 ### 📄 Recommandations officielles
 ### 📋 Protocoles (si pertinent)
 
 Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante.
+Pour LinkedIn : distingue les profils de praticiens influents des articles professionnels.
+Pour Reddit & Forums : inclus à la fois les communautés Reddit ET les forums médicaux/professionnels français.
 Sois concis — 3 lignes max par ressource. Couvre TOUTES les sections disponibles.
 Outil d'aide décisionnelle uniquement.`;
 
@@ -204,54 +208,65 @@ export default async function handler(req, res) {
   try {
     const q = await generateSearchQueries(lastMessage);
 
-    // ── 7 Brave calls max (Reddit free via OAuth when credentials set) ──
-    // Grouped smartly to maximise result quality per credit:
-    // 1. Books (bookstore domains only)
-    // 2. Videos (video API — separate endpoint, same credit pool)
-    // 3. Reddit (free via OAuth, or 1 Brave credit fallback)
-    // 4. Instagram (site: search — Brave crawls public IG posts well)
-    // 5. Facebook + LinkedIn + Forums (combined — similar professional content)
-    // 6. Official guidelines + PubMed combined
-    // 7. General broad search
+    // ── 8 Brave calls (7 if Reddit OAuth credentials set) ─────────
     const [
-      books, videos, reddit,
-      instagram, socialForums,
-      officialResearch, general,
+      books,
+      videos,
+      reddit,
+      instagram,
+      facebook,
+      linkedin,
+      forums,
+      officialResearch,
+      general,
     ] = await Promise.all([
-      // 1 credit — bookstores only
+      // 1 — Books on French bookstore sites only
       braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`),
-      // 1 video credit — YouTube
+
+      // 1 video credit — YouTube via video endpoint
       braveVideoSearch(q.videos),
-      // 0 credits if OAuth, else 1 credit
+
+      // 0 (OAuth) or 1 (Brave fallback) — Reddit
       redditSearch(q.reddit_fr, q.reddit_en),
-      // 1 credit — Instagram only, dedicated search
-      // Key insight: use hashtag-style terms + "instagram.com" for better results
-      braveSearch(`site:instagram.com ${q.instagram}`, 5),
-      // 1 credit — Facebook + LinkedIn + professional forums combined
-      // These return similar professional content so combining works well
-      braveSearch(`(${q.facebook} site:facebook.com) OR (${q.linkedin} site:linkedin.com) OR (${q.forums} forum professionnel psychologie)`, 6),
-      // 1 credit — official sources + research combined
-      braveSearch(`(${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int) OR (${q.research} site:pubmed.ncbi.nlm.nih.gov OR site:inserm.fr OR site:psyarxiv.com)`, 6),
-      // 1 credit — general
+
+      // 1 — Instagram dedicated: use broader terms without site: restriction
+      // Brave indexes public IG posts; combining hashtag terms works better
+      braveSearch(`instagram.com ${q.instagram}`, 5),
+
+      // 1 — Facebook groups dedicated
+      braveSearch(`site:facebook.com groups ${q.facebook}`, 4),
+
+      // 1 — LinkedIn: search BOTH key voices AND articles
+      // Using linkedin.com/pulse for articles and linkedin.com/in for profiles
+      braveSearch(`(site:linkedin.com/pulse ${q.linkedin_articles}) OR (site:linkedin.com/in ${q.linkedin_voices})`, 5),
+
+      // 1 — Professional forums ONLY — no social media, specific French medical forums
+      // Explicitly targets known French health/psychology forum domains
+      braveSearch(
+        `${q.forums} (site:doctissimo.fr OR site:psychologies.com OR site:psycom.org OR site:forum-psychiatrie.fr OR site:sante.journaldesfemmes.fr OR site:aufeminin.com OR forum psychologie psychiatrie santé mentale france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com)`,
+        6
+      ),
+
+      // 1 — Official guidelines + research combined (similar authoritative content)
+      braveSearch(
+        `(${q.official} site:has-sante.fr OR site:ansm.sante.fr OR site:who.int) OR (${q.research} site:pubmed.ncbi.nlm.nih.gov OR site:inserm.fr OR site:psyarxiv.com OR site:hal.science)`,
+        6
+      ),
+
+      // 1 — General broad search
       braveSearch(q.general, 5),
     ]);
 
-    // Split socialForums results by domain for cleaner display
-    const socialItems = socialForums ? socialForums.split("\n---\n") : [];
-    const facebookItems = socialItems.filter(r => r.includes("facebook.com")).join("\n---\n");
-    const linkedinItems = socialItems.filter(r => r.includes("linkedin.com")).join("\n---\n");
-    const forumItems = socialItems.filter(r => !r.includes("facebook.com") && !r.includes("linkedin.com")).join("\n---\n");
-
-    const fbLinkedinForums = [facebookItems, linkedinItems, forumItems].filter(Boolean).join("\n---\n");
-
     const sections = [
-      books              && `[LIVRES]\n${books}`,
-      videos             && `[VIDÉOS YOUTUBE]\n${videos}`,
-      reddit             && `[REDDIT]\n${reddit}`,
-      instagram          && `[INSTAGRAM]\n${instagram}`,
-      fbLinkedinForums   && `[FACEBOOK / LINKEDIN / FORUMS]\n${fbLinkedinForums}`,
-      officialResearch   && `[RECOMMANDATIONS OFFICIELLES & RECHERCHES]\n${officialResearch}`,
-      general            && `[GÉNÉRAL]\n${general}`,
+      books          && `[LIVRES]\n${books}`,
+      videos         && `[VIDÉOS YOUTUBE]\n${videos}`,
+      reddit         && `[REDDIT]\n${reddit}`,
+      instagram      && `[INSTAGRAM]\n${instagram}`,
+      facebook       && `[FACEBOOK]\n${facebook}`,
+      linkedin       && `[LINKEDIN — Voix clés & Articles]\n${linkedin}`,
+      forums         && `[FORUMS MÉDICAUX & PROFESSIONNELS]\n${forums}`,
+      officialResearch && `[RECOMMANDATIONS OFFICIELLES & RECHERCHES]\n${officialResearch}`,
+      general        && `[GÉNÉRAL]\n${general}`,
     ].filter(Boolean);
 
     const augmentedMessages = [
