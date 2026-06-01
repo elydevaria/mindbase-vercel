@@ -221,12 +221,20 @@ async function braveSearch(query, count = 5) {
       },
     });
     const data = await res.json();
+    process.stdout.write(`BRAVE: status=${res.status} results=${data.web?.results?.length || 0} query="${query.slice(0,60)}"\n`);
+    if (data.type === "ErrorResponse") {
+      process.stdout.write(`BRAVE ERROR RESPONSE: ${JSON.stringify(data)}\n`);
+      return "";
+    }
     const results = [];
     (data.web?.results || []).slice(0, count).forEach(r => {
       results.push(`Titre: ${r.title}\nURL: ${r.url}\nExtrait: ${r.description?.slice(0, 200) || ""}`);
     });
     return results.join("\n---\n");
-  } catch (e) { return ""; }
+  } catch (e) {
+    process.stdout.write("BRAVE ERROR: " + e.message + "\n");
+    return "";
+  }
 }
 
 // ─── Brave Video Search ───────────────────────────────────────────
