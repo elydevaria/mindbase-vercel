@@ -12,6 +12,12 @@ const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function supaFetch(path, method = "GET", body) {
   try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+    
+    // Safety check — ensure URL is valid before fetching
+    const url = `${SUPABASE_URL}/rest/v1/${path}`;
+    new URL(url); // throws if invalid
+
     const headers = {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
@@ -20,7 +26,7 @@ async function supaFetch(path, method = "GET", body) {
     if (method === "POST") headers["Prefer"] = "return=representation";
     if (method === "PATCH") headers["Prefer"] = "return=representation";
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    const res = await fetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -46,6 +52,81 @@ function normalizeQuery(q) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 200);
+}
+
+// ─── Local curated resources ─────────────────────────────────
+// Fetches ALL resources then filters in JS — no complex PostgREST
+async function getLocalResources(question, sections) {
+  try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return "";
+
+    const data = await supaFetch(
+      "local_resources?order=quality.desc&limit=200&select=title,description,url,file_url,section,source,quality,topics"
+    );
+
+    process.stdout.write(`LOCAL DB: fetched ${Array.isArray(data) ? data.length : 0} total resources\n`);
+    if (!Array.isArray(data) || !data.length) return "";
+
+    // Extract meaningful keywords — only words 4+ chars, strip stopwords
+    const STOPWORDS = new Set(["pour","dans","avec","cette","quel","quels","quelle","comment",
+      "trouver","donne","moi","les","des","une","sur","par","que","qui","est","sont",
+      "plus","aussi","mais","avoir","faire","niveau","preuve","formation","résultats",
+      "résultat","résultats","résultats","quelles","leurs","votre","notre","entre"]);
+
+    const words = question.toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove accents for matching
+      .split(/\s+/)
+      .map(w => w.replace(/[^a-z0-9]/g, ""))
+      .filter(w => w.length >= 4)  // minimum 4 chars — avoids partial matches
+      .filter(w => !STOPWORDS.has(w));
+
+    process.stdout.write(`LOCAL DB: keywords = ${JSON.stringify(words)}\n`);
+
+    const matches = data.filter(r => {
+      // Normalize topics and title for comparison (remove accents)
+      const normalize = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const topics = (r.topics || []).map(normalize).join(" ");
+      const title = normalize(r.title || "");
+
+      // Only match against TOPICS — not title/description
+      // Topics are hand-curated exact terms so matching is precise
+      return words.some(w => topics.split(/\s+/).some(t => t === w || t.startsWith(w)));
+    });
+
+    process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
+    if (!matches.length) return "";
+
+    // Group by section so they can be injected into the right section
+    const grouped = {};
+    matches.slice(0, 8).forEach(r => {
+      const sec = r.section || "protocols";
+      if (!grouped[sec]) grouped[sec] = [];
+      // Clean URL — remove any $0 artifacts
+      const url = (r.url || r.file_url || "").replace(/\$\d+$/, "").trim();
+      grouped[sec].push(
+        `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${url}\nExtrait: ${r.description || ""}`
+      );
+    });
+
+    // Return as labelled sections matching the search context format
+    return Object.entries(grouped).map(([sec, items]) => {
+      const label = {
+        protocols: "RECOMMANDATIONS & PROTOCOLES",
+        pubmed: "PUBMED — Articles cités & Recherches récentes",
+        books: "LIVRES",
+        videos: "VIDÉOS YOUTUBE",
+        instagram: "INSTAGRAM",
+        facebook: "FACEBOOK",
+        linkedin: "LINKEDIN — Key Opinion Leaders",
+        reddit: "REDDIT",
+        forums: "FORUMS MÉDICAUX & PROFESSIONNELS",
+      }[sec] || sec.toUpperCase();
+      return `[${label} — RESSOURCES VÉRIFIÉES MindBase]\n${items.join("\n---\n")}`;
+    }).join("\n\n===\n\n");
+  } catch (e) {
+    process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
+    return "";
+  }
 }
 
 // ─── Database lookup ──────────────────────────────────────────────
@@ -432,19 +513,77 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 1: Check database first ──────────────────────────────
+    // ── Step 1: Always run local DB first (0 credits, always fresh) ─
+    const earlyLocal = await getLocalResources(lastMessage, []);
+
+    // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
-      return res.json({ reply: dbResult.result, source: "database" });
+      process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
+      // Simply prepend local resources before cached result — no Mistral needed
+      // Format them to match the existing response style
+      let reply = dbResult.result;
+      if (earlyLocal) {
+        // Parse grouped sections and insert each before its matching section in the reply
+        const localSections = earlyLocal.split("\n\n===\n\n");
+        localSections.forEach(section => {
+          const labelMatch = section.match(/\[([^\]]+)\]/);
+          if (!labelMatch) return;
+          const label = labelMatch[1];
+          // Map to emoji header used in the reply
+          const headerMap = {
+            "RECOMMANDATIONS": "📄 Recommandations",
+            "PROTOCOLES": "📋 Protocoles",
+            "PUBMED": "🔬",
+            "LIVRES": "📚",
+            "YOUTUBE": "▶️",
+            "INSTAGRAM": "📸",
+            "FACEBOOK": "👥",
+            "LINKEDIN": "🔗",
+            "REDDIT": "💬",
+            "FORUMS": "💬",
+          };
+          const key = Object.keys(headerMap).find(k => label.toUpperCase().includes(k));
+          const emoji = key ? headerMap[key] : "✅";
+          // Extract just the resource items
+          const items = section.replace(/\[[^\]]+\]\n/, "");
+          const formatted = items.split("\n---\n").map(item => {
+            const lines = item.split("\n");
+            const title = lines[0]?.replace("Titre: ", "") || "";
+            const url = lines[1]?.replace("URL: ", "").replace(/\$\d+$/, "").trim() || "";
+            const desc = lines[2]?.replace("Extrait: ", "") || "";
+            return `- **${title}**\n  ${desc}\n  ${url}`;
+          }).join("\n");
+          // Prepend to reply as a verified section
+          reply = `### ${emoji} ${label.split(" — ")[0]}\n> ✅ Ressources vérifiées MindBase\n${formatted}\n\n` + reply;
+        });
+      }
+      return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Step 2: Intent detection + query generation ───────────────
+    // ── Step 3: Intent detection + query generation ───────────────
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
+
+    // ── Extract keywords for local DB lookup ────────────────────
+    // Simple keyword extraction from the question
+    const keywords = lastMessage
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
+      .slice(0, 6);
+
+    process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
+
+    // ── Local curated resources — always runs, 0 API credits ────
+    const localResults = await getLocalResources(lastMessage, intentSections);
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
@@ -488,6 +627,7 @@ export default async function handler(req, res) {
     ]);
 
     const sections = [
+      localResults    && `[RESSOURCES VÉRIFIÉES MindBase]\n${localResults}`,
       pubmed          && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
       recommendations && `[RECOMMANDATIONS & PROTOCOLES]\n${recommendations}`,
       books           && `[LIVRES]\n${books}`,
