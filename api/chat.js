@@ -60,48 +60,49 @@ async function getLocalResources(question) {
     if (!SUPABASE_URL || !SUPABASE_KEY) return "";
 
     // Fetch all resources
-    const data = await supaFetch(
+    const dataPromise = supaFetch(
       "local_resources?order=quality.desc&limit=200&select=id,title,description,url,file_url,section,source,quality,topics"
     );
-    if (!Array.isArray(data) || !data.length) return "";
 
-    // Ask Mistral: what is the main topic of this question?
-    // Return ONLY the topic string as it would appear in the topics column
-    const tagRes = await fetch(MISTRAL_API, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "mistral-small-latest",
-        max_tokens: 20,
-        temperature: 0,
-        messages: [{
-          role: "system",
-          content: "Réponds avec UN SEUL mot en minuscules sans accents qui correspond au sujet principal. Uniquement parmi: tdah, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, bipolaire, addiction, burnout. Rien d'autre."
-        }, {
-          role: "user",
-          content: question
-        }]
-      })
-    });
+    // Ask Mistral for main topic — with timeout so it never blocks
+    const topicPromise = Promise.race([
+      fetch(MISTRAL_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          max_tokens: 10,
+          temperature: 0,
+          messages: [
+            { role: "system", content: "Un mot en minuscules sans accents parmi: tdah, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, bipolaire, addiction, burnout. Rien d'autre." },
+            { role: "user", content: question }
+          ]
+        })
+      }).then(r => r.json()).then(d => d.choices?.[0]?.message?.content?.toLowerCase().trim().replace(/[^a-z]/g, "") || ""),
+      new Promise(resolve => setTimeout(() => resolve(""), 3000)) // 3s timeout
+    ]);
 
-    const tagData = await tagRes.json();
-    const topic = (tagData.choices?.[0]?.message?.content || "").toLowerCase().trim().replace(/[^a-z]/g, "");
-    process.stdout.write(`LOCAL DB: topic="${topic}"\n`);
-    if (!topic) return "";
+    const [data, topic] = await Promise.all([dataPromise, topicPromise]);
 
-    // Simple check: does the topics array contain this topic string?
+    process.stdout.write(`LOCAL DB: topic="${topic}" rows=${Array.isArray(data) ? data.length : 0}\n`);
+
+    if (!topic || !Array.isArray(data) || !data.length) return "";
+
     const matches = data.filter(r =>
-      (r.topics || []).some(t => t.toLowerCase().replace(/[^a-z]/g, "") === topic)
+      (r.topics || []).some(t => {
+        const n = t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+        return n === topic || n.includes(topic) || topic.includes(n);
+      })
     );
 
-    process.stdout.write(`LOCAL DB: ${matches.length} matches for "${topic}"\n`);
+    process.stdout.write(`LOCAL DB: ${matches.length} matches\n`);
     if (!matches.length) return "";
 
     const grouped = {};
-    matches.slice(0, 8).forEach(r => {
+    matches.slice(0, 6).forEach(r => {
       const sec = r.section || "protocols";
       if (!grouped[sec]) grouped[sec] = [];
       const url = (r.url || r.file_url || "").replace(/\$\d+$/, "").trim();
@@ -109,13 +110,13 @@ async function getLocalResources(question) {
     });
 
     return Object.entries(grouped).map(([sec, items]) => {
-      const label = { protocols:"RECOMMANDATIONS & PROTOCOLES", pubmed:"PUBMED", books:"LIVRES", videos:"VIDÉOS YOUTUBE", instagram:"INSTAGRAM", facebook:"FACEBOOK", linkedin:"LINKEDIN", reddit:"REDDIT", forums:"FORUMS" }[sec] || sec.toUpperCase();
+      const label = { protocols:"RECOMMANDATIONS & PROTOCOLES", pubmed:"PUBMED", books:"LIVRES", videos:"VIDÉOS YOUTUBE" }[sec] || sec.toUpperCase();
       return `[${label} — RESSOURCES VÉRIFIÉES MindBase]\n${items.join("\n---\n")}`;
     }).join("\n\n===\n\n");
 
   } catch (e) {
     process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
-    return "";
+    return ""; // Never block on error
   }
 }
 
