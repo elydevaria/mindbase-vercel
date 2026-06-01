@@ -60,31 +60,33 @@ async function getLocalResources(question, sections) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return "";
 
-    // Fetch everything — table stays small (<500 rows for years)
     const data = await supaFetch(
       "local_resources?order=quality.desc&limit=200&select=title,description,url,file_url,section,source,quality,topics"
     );
 
+    process.stdout.write(`LOCAL DB: fetched ${Array.isArray(data) ? data.length : 0} total resources\n`);
     if (!Array.isArray(data) || !data.length) return "";
 
-    // Simple keyword matching in JS
+    // Extract meaningful words — keep accented chars, just lowercase
     const words = question.toLowerCase()
-      .replace(/[^a-z0-9 ]/g, " ")
       .split(/\s+/)
-      .filter(w => w.length > 3);
+      .map(w => w.replace(/[^a-z0-9àâäéèêëîïôöùûüç]/g, ""))
+      .filter(w => w.length > 2)
+      .filter(w => !["pour","dans","avec","cette","quel","comment","trouver","donne","les","des","une","sur","par","que","qui","est","sont","moi"].includes(w));
+
+    process.stdout.write(`LOCAL DB: keywords = ${JSON.stringify(words)}\n`);
 
     const matches = data.filter(r => {
       const topics = (r.topics || []).join(" ").toLowerCase();
       const title = (r.title || "").toLowerCase();
-      // Match if any keyword appears in topics or title
-      const keywordMatch = words.some(w => topics.includes(w) || title.includes(w));
-      // Also filter by section if intent sections are known
-      const sectionMatch = sections.length === 0 || sections.includes(r.section);
-      return keywordMatch && sectionMatch;
+      const desc = (r.description || "").toLowerCase();
+      // Match if ANY keyword appears anywhere in topics, title or description
+      return words.some(w => topics.includes(w) || title.includes(w) || desc.includes(w));
+      // Note: removed section filter — show all matching resources regardless of section
     });
 
+    process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
     if (!matches.length) return "";
-    process.stdout.write(`LOCAL DB: ${matches.length} matches\n`);
 
     return matches.slice(0, 6).map(r =>
       `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${r.url || r.file_url}\nExtrait: ${r.description || ""}`
