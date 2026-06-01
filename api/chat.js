@@ -600,7 +600,7 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
-      // 2 credits — French sources + Ameli exact paths, merged into one result
+      // 2 credits — French sources + Ameli (domain only, Brave doesn't support subdirectory site:)
       has("protocols") ? (async () => {
         const [main, ameli] = await Promise.all([
           braveSearch(
@@ -608,7 +608,7 @@ export default async function handler(req, res) {
             protocolCount
           ),
           braveSearch(
-            `${q.recommendations} (site:ameli.fr/assure/sante/themes/sante-mentale-de-l-adulte OR site:ameli.fr/assure/sante/themes)`,
+            `${q.recommendations} site:ameli.fr`,
             5
           ),
         ]);
