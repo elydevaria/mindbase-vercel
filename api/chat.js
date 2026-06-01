@@ -12,6 +12,12 @@ const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function supaFetch(path, method = "GET", body) {
   try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+    
+    // Safety check — ensure URL is valid before fetching
+    const url = `${SUPABASE_URL}/rest/v1/${path}`;
+    new URL(url); // throws if invalid
+
     const headers = {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
@@ -20,7 +26,7 @@ async function supaFetch(path, method = "GET", body) {
     if (method === "POST") headers["Prefer"] = "return=representation";
     if (method === "PATCH") headers["Prefer"] = "return=representation";
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    const res = await fetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -46,6 +52,47 @@ function normalizeQuery(q) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 200);
+}
+
+// ─── Local curated resources ─────────────────────────────────
+// Fetches ALL resources then filters in JS — no complex PostgREST
+async function getLocalResources(question, sections) {
+  try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return "";
+
+    // Fetch everything — table stays small (<500 rows for years)
+    const data = await supaFetch(
+      "local_resources?order=quality.desc&limit=200&select=title,description,url,file_url,section,source,quality,topics"
+    );
+
+    if (!Array.isArray(data) || !data.length) return "";
+
+    // Simple keyword matching in JS
+    const words = question.toLowerCase()
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 3);
+
+    const matches = data.filter(r => {
+      const topics = (r.topics || []).join(" ").toLowerCase();
+      const title = (r.title || "").toLowerCase();
+      // Match if any keyword appears in topics or title
+      const keywordMatch = words.some(w => topics.includes(w) || title.includes(w));
+      // Also filter by section if intent sections are known
+      const sectionMatch = sections.length === 0 || sections.includes(r.section);
+      return keywordMatch && sectionMatch;
+    });
+
+    if (!matches.length) return "";
+    process.stdout.write(`LOCAL DB: ${matches.length} matches\n`);
+
+    return matches.slice(0, 6).map(r =>
+      `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${r.url || r.file_url}\nExtrait: ${r.description || ""}`
+    ).join("\n---\n");
+  } catch (e) {
+    process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
+    return "";
+  }
 }
 
 // ─── Database lookup ──────────────────────────────────────────────
@@ -350,7 +397,8 @@ Règles pour "sections" :
       "forums": "forums", "forum": "forums", "discussions": "forums",
     };
     const rawSections = parsed.sections || [];
-    const sections = [...new Set(
+    const sections = [
+      localResults && `[RESSOURCES VÉRIFIÉES MindBase]\n${localResults}`,...new Set(
       rawSections.map(s => SECTION_MAP[s.toLowerCase()] || (ALL_SECTIONS.includes(s) ? s : null))
         .filter(Boolean)
     )];
@@ -432,7 +480,7 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 1: Check database first ──────────────────────────────
+    // ── Step 1: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       return res.json({ reply: dbResult.result, source: "database" });
@@ -445,6 +493,22 @@ export default async function handler(req, res) {
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
+
+    // ── Extract keywords for local DB lookup ────────────────────
+    // Simple keyword extraction from the question
+    const keywords = lastMessage
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
+      .slice(0, 6);
+
+    process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
+
+    // ── Local curated resources — always runs, 0 API credits ────
+    const localResults = await getLocalResources(lastMessage, intentSections);
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
