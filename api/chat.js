@@ -88,9 +88,33 @@ async function getLocalResources(question, sections) {
     process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
     if (!matches.length) return "";
 
-    return matches.slice(0, 6).map(r =>
-      `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${r.url || r.file_url}\nExtrait: ${r.description || ""}`
-    ).join("\n---\n");
+    // Group by section so they can be injected into the right section
+    const grouped = {};
+    matches.slice(0, 8).forEach(r => {
+      const sec = r.section || "protocols";
+      if (!grouped[sec]) grouped[sec] = [];
+      // Clean URL — remove any $0 artifacts
+      const url = (r.url || r.file_url || "").replace(/\$\d+$/, "").trim();
+      grouped[sec].push(
+        `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${url}\nExtrait: ${r.description || ""}`
+      );
+    });
+
+    // Return as labelled sections matching the search context format
+    return Object.entries(grouped).map(([sec, items]) => {
+      const label = {
+        protocols: "RECOMMANDATIONS & PROTOCOLES",
+        pubmed: "PUBMED — Articles cités & Recherches récentes",
+        books: "LIVRES",
+        videos: "VIDÉOS YOUTUBE",
+        instagram: "INSTAGRAM",
+        facebook: "FACEBOOK",
+        linkedin: "LINKEDIN — Key Opinion Leaders",
+        reddit: "REDDIT",
+        forums: "FORUMS MÉDICAUX & PROFESSIONNELS",
+      }[sec] || sec.toUpperCase();
+      return `[${label} — RESSOURCES VÉRIFIÉES MindBase]\n${items.join("\n---\n")}`;
+    }).join("\n\n===\n\n");
   } catch (e) {
     process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
     return "";
@@ -487,12 +511,28 @@ export default async function handler(req, res) {
     // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
-      // Cache hit — always prepend fresh local resources
-      const reply = earlyLocal
-        ? `### ✅ Ressources vérifiées MindBase\n${earlyLocal}\n\n` + dbResult.result
-        : dbResult.result;
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
-      return res.json({ reply, source: "database" });
+      if (!earlyLocal) return res.json({ reply: dbResult.result, source: "database" });
+      // Pass local results + cached result to Mistral for clean merging
+      const mergeRes = await fetch(MISTRAL_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          max_tokens: 4000,
+          temperature: 0.1,
+          messages: [
+            { role: "system", content: `Tu es MindBase. Intègre les RESSOURCES VÉRIFIÉES dans la réponse existante en les ajoutant dans la section correspondante (Protocoles, PubMed, etc.). Ne duplique pas. URLs exactes uniquement. Réponds en français.` },
+            { role: "user", content: `RESSOURCES VÉRIFIÉES À INTÉGRER:\n${earlyLocal}\n\nRÉPONSE EXISTANTE:\n${dbResult.result}` }
+          ]
+        })
+      });
+      const mergeData = await mergeRes.json();
+      const merged = mergeData.choices?.[0]?.message?.content || dbResult.result;
+      return res.json({ reply: merged, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
