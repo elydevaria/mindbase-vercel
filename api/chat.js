@@ -598,7 +598,7 @@ export default async function handler(req, res) {
       forums,
     ] = await Promise.all([
       has("protocols") ? braveSearch(
-        `${q.recommendations} (site:ameli.fr OR site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
+        `${q.recommendations} (site:ameli.fr/assure OR site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
         baseCount
       ) : Promise.resolve(""),
       has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
