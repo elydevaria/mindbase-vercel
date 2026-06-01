@@ -399,8 +399,7 @@ Règles pour "sections" :
       "forums": "forums", "forum": "forums", "discussions": "forums",
     };
     const rawSections = parsed.sections || [];
-    const sections = [
-      localResults && `[RESSOURCES VÉRIFIÉES MindBase]\n${localResults}`,...new Set(
+    const sections = [...new Set(
       rawSections.map(s => SECTION_MAP[s.toLowerCase()] || (ALL_SECTIONS.includes(s) ? s : null))
         .filter(Boolean)
     )];
@@ -554,6 +553,7 @@ export default async function handler(req, res) {
     ]);
 
     const sections = [
+      localResults    && `[RESSOURCES VÉRIFIÉES MindBase]\n${localResults}`,
       pubmed          && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
       recommendations && `[RECOMMANDATIONS & PROTOCOLES]\n${recommendations}`,
       books           && `[LIVRES]\n${books}`,
