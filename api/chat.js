@@ -477,10 +477,41 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 1: Check database first ──────────────────────────────
+    // ── Step 1: Always query local curated resources first ────────
+    // Local DB is ALWAYS queried — even on cache hit — because you add new resources regularly
+    const earlyKeywords = lastMessage
+      .toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .filter(w => !["pour","dans","avec","cette","quel","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
+      .slice(0, 6);
+
+    const localResources = await getLocalResources([], earlyKeywords);
+    const localFormatted = formatLocalResources(localResources);
+
+    // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
-      return res.json({ reply: dbResult.result, source: "database" });
+      // Cache hit — but inject fresh local resources into the cached reply
+      let reply = dbResult.result;
+      if (localFormatted) {
+        // Prepend verified resources section if not already present
+        if (!reply.includes("✓ Vérifié") && !reply.includes("RESSOURCE VÉRIFIÉE")) {
+          reply = `### ✅ Ressources vérifiées MindBase
+${localResources.map(r => `**${r.title}** ✓
+${r.description}
+${r.url || r.file_url}`).join("
+
+")}
+
+---
+
+` + reply;
+        }
+      }
+      return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
@@ -506,7 +537,6 @@ export default async function handler(req, res) {
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
-      localResources,
       recommendations,
       pubmed,
       books,
@@ -517,8 +547,6 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
-      // Local curated database — always runs, 0 API credits
-      getLocalResources(intentSections, keywords),
       has("protocols") ? braveSearch(
         `${q.recommendations} (site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
         baseCount
@@ -547,9 +575,6 @@ export default async function handler(req, res) {
         baseCount
       ) : Promise.resolve(""),
     ]);
-
-    // Format local resources and prepend to sections
-    const localFormatted = formatLocalResources(localResources);
 
     const sections = [
       localFormatted  && `[RESSOURCES VÉRIFIÉES — Base locale MindBase]\n${localFormatted}`,
