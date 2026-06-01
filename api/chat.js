@@ -487,20 +487,11 @@ export default async function handler(req, res) {
     // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
-      // Cache hit — inject fresh local resources at top if any
-      let reply = dbResult.result;
-      if (earlyLocal) {
-        const localSection = `### ✅ Ressources vérifiées MindBase\n${
-          earlyLocal.split("\n---\n").map(r => {
-            const lines = r.split("\n");
-            const title = lines[0].replace("Titre: ", "");
-            const url = lines[1]?.replace("URL: ", "");
-            const desc = lines[2]?.replace("Extrait: ", "");
-            return `**${title}**\n${desc}\n${url}`;
-          }).join("\n\n")
-        }\n\n---\n\n`;
-        reply = localSection + reply;
-      }
+      // Cache hit — always prepend fresh local resources
+      const reply = earlyLocal
+        ? `### ✅ Ressources vérifiées MindBase\n${earlyLocal}\n\n` + dbResult.result
+        : dbResult.result;
+      process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
       return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
