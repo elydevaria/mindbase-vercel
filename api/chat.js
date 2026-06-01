@@ -56,16 +56,18 @@ async function getLocalResources(intentSections, keywords) {
     if (!SUPABASE_URL || !SUPABASE_KEY) return [];
     if (!keywords.length) return [];
 
-    // Use overlap operator (@>) for each keyword separately
-    // Run parallel queries for each keyword then deduplicate
-    const queries = keywords.slice(0, 3).map(k =>
-      supaFetch(
-        `local_resources?topics=cs.{${encodeURIComponent(k)}}&order=quality.desc&limit=5&select=id,title,description,url,file_url,section,source,quality`
-      )
-    );
+    // PostgREST array contains syntax: topics=cs.{"keyword"}
+    // Must use double quotes inside curly braces, properly URL-encoded
+    const queries = keywords.slice(0, 3).map(k => {
+      // Encode: {"keyword"} → %7B%22keyword%22%7D
+      const filter = encodeURIComponent(`{"${k}"}`);
+      return supaFetch(
+        `local_resources?topics=cs.${filter}&order=quality.desc&limit=5&select=id,title,description,url,file_url,section,source,quality`
+      );
+    });
 
     const results = await Promise.all(queries);
-    
+
     // Merge and deduplicate by id
     const seen = new Set();
     const merged = [];
@@ -84,7 +86,6 @@ async function getLocalResources(intentSections, keywords) {
       ? merged.filter(r => intentSections.includes(r.section))
       : merged;
 
-    // Sort by quality
     filtered.sort((a, b) => (b.quality || 0) - (a.quality || 0));
     const top = filtered.slice(0, 8);
 
