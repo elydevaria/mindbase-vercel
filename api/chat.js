@@ -512,27 +512,45 @@ export default async function handler(req, res) {
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
-      if (!earlyLocal) return res.json({ reply: dbResult.result, source: "database" });
-      // Pass local results + cached result to Mistral for clean merging
-      const mergeRes = await fetch(MISTRAL_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "mistral-small-latest",
-          max_tokens: 4000,
-          temperature: 0.1,
-          messages: [
-            { role: "system", content: `Tu es MindBase. Intègre les RESSOURCES VÉRIFIÉES dans la réponse existante en les ajoutant dans la section correspondante (Protocoles, PubMed, etc.). Ne duplique pas. URLs exactes uniquement. Réponds en français.` },
-            { role: "user", content: `RESSOURCES VÉRIFIÉES À INTÉGRER:\n${earlyLocal}\n\nRÉPONSE EXISTANTE:\n${dbResult.result}` }
-          ]
-        })
-      });
-      const mergeData = await mergeRes.json();
-      const merged = mergeData.choices?.[0]?.message?.content || dbResult.result;
-      return res.json({ reply: merged, source: "database" });
+      // Simply prepend local resources before cached result — no Mistral needed
+      // Format them to match the existing response style
+      let reply = dbResult.result;
+      if (earlyLocal) {
+        // Parse grouped sections and insert each before its matching section in the reply
+        const localSections = earlyLocal.split("\n\n===\n\n");
+        localSections.forEach(section => {
+          const labelMatch = section.match(/\[([^\]]+)\]/);
+          if (!labelMatch) return;
+          const label = labelMatch[1];
+          // Map to emoji header used in the reply
+          const headerMap = {
+            "RECOMMANDATIONS": "📄 Recommandations",
+            "PROTOCOLES": "📋 Protocoles",
+            "PUBMED": "🔬",
+            "LIVRES": "📚",
+            "YOUTUBE": "▶️",
+            "INSTAGRAM": "📸",
+            "FACEBOOK": "👥",
+            "LINKEDIN": "🔗",
+            "REDDIT": "💬",
+            "FORUMS": "💬",
+          };
+          const key = Object.keys(headerMap).find(k => label.toUpperCase().includes(k));
+          const emoji = key ? headerMap[key] : "✅";
+          // Extract just the resource items
+          const items = section.replace(/\[[^\]]+\]\n/, "");
+          const formatted = items.split("\n---\n").map(item => {
+            const lines = item.split("\n");
+            const title = lines[0]?.replace("Titre: ", "") || "";
+            const url = lines[1]?.replace("URL: ", "").replace(/\$\d+$/, "").trim() || "";
+            const desc = lines[2]?.replace("Extrait: ", "") || "";
+            return `- **${title}**\n  ${desc}\n  ${url}`;
+          }).join("\n");
+          // Prepend to reply as a verified section
+          reply = `### ${emoji} ${label.split(" — ")[0]}\n> ✅ Ressources vérifiées MindBase\n${formatted}\n\n` + reply;
+        });
+      }
+      return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
