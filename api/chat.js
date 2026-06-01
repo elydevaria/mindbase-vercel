@@ -82,13 +82,76 @@ async function getLocalResources(question, sections) {
 
     process.stdout.write(`LOCAL DB: keywords = ${JSON.stringify(words)}\n`);
 
-    const matches = data.filter(r => {
-      const normalize = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const topicList = (r.topics || []).map(normalize);
+    // Topic synonym map — any of these keywords match resources tagged with any variant
+    const TOPIC_MAP = {
+      // TDAH / ADHD
+      "tdah": ["tdah","adhd","deficit-attention","hyperactivite","trouble-deficit","tda"],
+      "adhd": ["tdah","adhd","deficit-attention","hyperactivite"],
+      "attention": ["tdah","adhd","deficit-attention"],
+      "hyperactivite": ["tdah","adhd","hyperactivite"],
+      // Depression
+      "depression": ["depression","depressif","episode-depressif","trouble-depressif","humeur"],
+      "depressif": ["depression","depressif","episode-depressif"],
+      // Anxiety
+      "anxiete": ["anxiete","anxieux","angoisse","trouble-anxieux","tag","phobia","phobie"],
+      "anxieux": ["anxiete","anxieux","trouble-anxieux"],
+      "angoisse": ["anxiete","anxieux","angoisse"],
+      // Trauma / PTSD
+      "tspt": ["tspt","ptsd","trauma","traumatisme","stress-post-traumatique"],
+      "ptsd": ["tspt","ptsd","trauma","traumatisme"],
+      "trauma": ["tspt","ptsd","trauma","traumatisme"],
+      "emdr": ["tspt","ptsd","trauma","emdr"],
+      // OCD
+      "toc": ["toc","ocd","obsessionnel","compulsif"],
+      "ocd": ["toc","ocd","obsessionnel"],
+      // Borderline / BPD
+      "borderline": ["borderline","tpb","bpd","personnalite-borderline"],
+      "tpb": ["borderline","tpb","bpd"],
+      // Eating disorders
+      "tca": ["tca","anorexie","boulimie","hyperphagie","trouble-alimentaire"],
+      "anorexie": ["tca","anorexie"],
+      "boulimie": ["tca","boulimie"],
+      // Schizophrenia / Psychosis
+      "schizophrenie": ["schizophrenie","psychose","psychotique","schizophrenique"],
+      "psychose": ["schizophrenie","psychose","psychotique"],
+      // Autism
+      "autisme": ["autisme","tsa","trouble-spectre-autisme","neurodeveloppemental"],
+      "tsa": ["autisme","tsa","trouble-spectre-autisme"],
+      // Bipolar
+      "bipolaire": ["bipolaire","trouble-bipolaire","maniaque","manie"],
+      "bipolarite": ["bipolaire","trouble-bipolaire"],
+      // Addiction
+      "addiction": ["addiction","dependance","substance","alcool","cannabis"],
+      "alcool": ["addiction","alcool"],
+      // Burnout
+      "burnout": ["burnout","burn-out","epuisement","professionnel"],
+      // General
+      "sante-mentale": ["sante-mentale","psychiatrie","psychologie"],
+      "enfant": ["enfant","pediatrique","pedopsychiatrie"],
+      "adolescent": ["adolescent","ado"],
+      "adulte": ["adulte"],
+    };
 
-      // Strict: at least one keyword must exactly match a topic word
-      // This prevents depression resources showing for TDAH queries
-      return keywords.some(k => topicList.some(t => t === k));
+    const normalize = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, "-");
+
+    // Expand keywords using synonym map
+    const expandedKeywords = new Set(keywords);
+    keywords.forEach(k => {
+      const nk = normalize(k);
+      if (TOPIC_MAP[nk]) TOPIC_MAP[nk].forEach(v => expandedKeywords.add(v));
+      // Also check if keyword contains a mapped term
+      Object.keys(TOPIC_MAP).forEach(mapKey => {
+        if (nk.includes(mapKey) || mapKey.includes(nk)) {
+          TOPIC_MAP[mapKey].forEach(v => expandedKeywords.add(v));
+        }
+      });
+    });
+
+    process.stdout.write(`LOCAL: keywords=${JSON.stringify(keywords)} expanded=${JSON.stringify([...expandedKeywords].slice(0,10))}\n`);
+
+    const matches = data.filter(r => {
+      const topicList = (r.topics || []).map(normalize);
+      return [...expandedKeywords].some(k => topicList.some(t => t === k));
     });
 
     process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
