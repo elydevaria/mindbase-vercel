@@ -55,57 +55,57 @@ function normalizeQuery(q) {
 }
 
 // ─── Local curated resources ─────────────────────────────────
+// Simple, reliable — no Mistral, no failure risk
+// Matches question against a hardcoded topic map
+const CLINICAL_TOPICS = {
+  tdah:         ["tdah","adhd","attention","hyperactivite","deficit"],
+  depression:   ["depression","depressif","depressive","humeur"],
+  anxiete:      ["anxiete","anxieux","angoisse","anxiété","trouble-anxieux"],
+  tspt:         ["tspt","ptsd","trauma","traumatisme","emdr"],
+  toc:          ["toc","ocd","obsessionnel","compulsif"],
+  borderline:   ["borderline","tpb","bpd"],
+  tca:          ["tca","anorexie","boulimie","hyperphagie"],
+  schizophrenie:["schizophrenie","psychose","schizophrénique"],
+  autisme:      ["autisme","tsa","neurodeveloppemental"],
+  bipolaire:    ["bipolaire","maniaque","manie","bipolarite"],
+  addiction:    ["addiction","dependance","alcool","cannabis","substance"],
+  burnout:      ["burnout","burn-out","epuisement"],
+};
+
+function detectTopic(question) {
+  const q = question.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  for (const [topic, keywords] of Object.entries(CLINICAL_TOPICS)) {
+    if (keywords.some(k => q.includes(k))) return topic;
+  }
+  return null;
+}
+
 async function getLocalResources(question) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return "";
 
-    // Fetch all resources
-    const dataPromise = supaFetch(
+    const topic = detectTopic(question);
+    process.stdout.write(`LOCAL DB: detected topic="${topic}"\n`);
+    if (!topic) return "";
+
+    const data = await supaFetch(
       "local_resources?order=quality.desc&limit=200&select=id,title,description,url,file_url,section,source,quality,topics"
     );
 
-    // Ask Mistral for main topic — with timeout so it never blocks
-    const topicPromise = Promise.race([
-      fetch(MISTRAL_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "mistral-small-latest",
-          max_tokens: 10,
-          temperature: 0,
-          messages: [
-            { role: "system", content: "Un mot en minuscules sans accents parmi: tdah, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, bipolaire, addiction, burnout. Rien d'autre." },
-            { role: "user", content: question }
-          ]
-        })
-      }).then(r => r.json()).then(d => d.choices?.[0]?.message?.content?.toLowerCase().trim().replace(/[^a-z]/g, "") || ""),
-      new Promise(resolve => setTimeout(() => resolve(""), 3000)) // 3s timeout
-    ]);
+    if (!Array.isArray(data) || !data.length) return "";
 
-    const [data, topic] = await Promise.all([dataPromise, topicPromise]);
-
-    process.stdout.write(`LOCAL DB: topic="${topic}" rows=${Array.isArray(data) ? data.length : 0}\n`);
-
-    if (!topic || !Array.isArray(data) || !data.length) return "";
-
+    const variants = CLINICAL_TOPICS[topic] || [topic];
     const matches = data.filter(r =>
       (r.topics || []).some(t => {
-        // Normalize both sides: lowercase, remove accents, replace hyphens with nothing
-        const normalize = s => s.toLowerCase()
-          .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-          .replace(/[-_]/g, "")  // remove hyphens/underscores
-          .replace(/[^a-z0-9]/g, ""); // keep only alphanumeric
-        const nt = normalize(t);
-        const nk = normalize(topic);
-        process.stdout.write(`  comparing topic="${nt}" vs keyword="${nk}"\n`);
-        return nt === nk || nt.includes(nk) || nk.includes(nt);
+        const nt = t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/-/g, "");
+        return variants.some(v => {
+          const nv = v.replace(/-/g, "");
+          return nt === nv || nt.includes(nv) || nv.includes(nt);
+        });
       })
     );
 
-    process.stdout.write(`LOCAL DB: ${matches.length} matches\n`);
+    process.stdout.write(`LOCAL DB: ${matches.length} matches for "${topic}"\n`);
     if (!matches.length) return "";
 
     const grouped = {};
@@ -123,7 +123,7 @@ async function getLocalResources(question) {
 
   } catch (e) {
     process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
-    return ""; // Never block on error
+    return "";
   }
 }
 
