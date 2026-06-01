@@ -598,18 +598,12 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
-      has("protocols") ? Promise.all([
-        // Priority sources first
-        braveSearch(`${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:nice.org.uk)`, protocolCount),
-        // Secondary sources
-        braveSearch(`${q.recommendations} (site:ansm.sante.fr OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:sfpeada.fr)`, 4),
-      ]).then(([priority, secondary]) => {
-        // Merge: priority results first, then secondary, deduplicate by URL
-        const seen = new Set();
-        return [...(priority ? priority.split("\n---\n") : []), ...(secondary ? secondary.split("\n---\n") : [])]
-          .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
-          .join("\n---\n");
-      }) : Promise.resolve(""),
+      // 1 credit — French sources first, then international
+      // Brave respects site: order so French sources appear first
+      has("protocols") ? braveSearch(
+        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
+        protocolCount
+      ) : Promise.resolve(""),
       has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
       has("books") ? braveSearch(
         `${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`,
