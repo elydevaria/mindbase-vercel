@@ -551,7 +551,7 @@ export default function MindBase() {
         </button>
 
         <div style={{ padding:"14px 14px 8px", borderTop:"1px solid #f0ede6", marginTop:12 }}>
-          <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.07em", color:"#a09a93", fontWeight:500, marginBottom:8 }}>Suggestions</div>
+          <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.07em", color:"#a09a93", fontWeight:500, marginBottom:8 }}>Exemples de questions</div>
           {QUICK_SUGGESTIONS.map((s,i)=><button key={i} onClick={()=>sendMessage(s)} style={{ display:"block", width:"100%", textAlign:"left", padding:"7px 9px", border:"none", background:"none", fontSize:11, color:"#6b6560", borderRadius:7, cursor:"pointer", marginBottom:2, lineHeight:1.4, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.color="#2d5a3d";}} onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.color="#6b6560";}}>{s.length>54?s.slice(0,54)+"…":s}</button>)}
         </div>
 
@@ -580,6 +580,7 @@ export default function MindBase() {
             <div style={{ background:"#fff", border:"1px solid #e2ddd5", borderRadius:14, padding: isMobile ? 16 : 26 }}>
               <div style={{ fontFamily:"Georgia,serif", fontSize: isMobile ? 20 : 25, color:"#1c1917", marginBottom:6 }}>Bonjour, <em style={{ color:"#2d5a3d" }}>{userId}</em> 👋</div>
               <div style={{ fontSize:12, color:"#6b6560", lineHeight:1.65, marginBottom:14, maxWidth:520 }}>{isMobile ? "Posez votre question clinique ci-dessous." : "Posez une question sur n'importe quel sujet clinique — je structure ma réponse en sections : livres, vidéos, Instagram, Facebook, Reddit, recherches, recommandations HAS."}</div>
+              <div style={{ fontSize:11, color:"#a09a93", textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:500, marginBottom:8 }}>Exemples de questions</div>
               <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap:8 }}>
                 {QUICK_SUGGESTIONS.slice(0, isMobile ? 3 : 4).map((s,i)=><button key={i} onClick={()=>sendMessage(s)} style={{ padding:"11px 14px", background:"#f5f3ee", border:"1px solid #e2ddd5", borderRadius:10, cursor:"pointer", textAlign:"left", fontFamily:"system-ui,sans-serif", fontSize:12, color:"#3a3530", lineHeight:1.5 }} onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.borderColor="#a8cdb5";}} onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ee";e.currentTarget.style.borderColor="#e2ddd5";}}>{s}</button>)}
               </div>
