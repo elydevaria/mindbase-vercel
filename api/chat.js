@@ -481,14 +481,31 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 1: Check query cache ──────────────────────────────────
+    // ── Step 1: Always run local DB first (0 credits, always fresh) ─
+    const earlyLocal = await getLocalResources(lastMessage, []);
+
+    // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
-      return res.json({ reply: dbResult.result, source: "database" });
+      // Cache hit — inject fresh local resources at top if any
+      let reply = dbResult.result;
+      if (earlyLocal) {
+        const localSection = `### ✅ Ressources vérifiées MindBase\n${
+          earlyLocal.split("\n---\n").map(r => {
+            const lines = r.split("\n");
+            const title = lines[0].replace("Titre: ", "");
+            const url = lines[1]?.replace("URL: ", "");
+            const desc = lines[2]?.replace("Extrait: ", "");
+            return `**${title}**\n${desc}\n${url}`;
+          }).join("\n\n")
+        }\n\n---\n\n`;
+        reply = localSection + reply;
+      }
+      return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Step 2: Intent detection + query generation ───────────────
+    // ── Step 3: Intent detection + query generation ───────────────
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
