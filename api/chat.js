@@ -12,12 +12,6 @@ const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function supaFetch(path, method = "GET", body) {
   try {
-    if (!SUPABASE_URL || !SUPABASE_KEY) return null;
-    
-    // Safety check — ensure URL is valid before fetching
-    const url = `${SUPABASE_URL}/rest/v1/${path}`;
-    new URL(url); // throws if invalid
-
     const headers = {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
@@ -26,7 +20,7 @@ async function supaFetch(path, method = "GET", body) {
     if (method === "POST") headers["Prefer"] = "return=representation";
     if (method === "PATCH") headers["Prefer"] = "return=representation";
 
-    const res = await fetch(url, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -52,62 +46,6 @@ function normalizeQuery(q) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 200);
-}
-
-// ─── Local curated resources lookup ──────────────────────────
-// Searches your manually curated local_resources table
-// Returns verified resources that match the query topics
-async function getLocalResources(intentSections, keywords) {
-  try {
-    if (!SUPABASE_URL || !SUPABASE_KEY) return [];
-
-    // Fetch all resources — simpler than complex PostgREST array filters
-    // Filter in JS — table will stay small (<1000 rows) so this is fine
-    const data = await supaFetch(
-      `local_resources?order=quality.desc&limit=200&select=id,title,description,url,file_url,section,source,quality,topics`
-    );
-
-    if (!Array.isArray(data) || data.length === 0) return [];
-
-    // Filter by keywords against topics array
-    let filtered = data;
-    if (keywords.length > 0) {
-      filtered = data.filter(r => {
-        const topics = r.topics || [];
-        return keywords.some(k =>
-          topics.some(t => t.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(t.toLowerCase()))
-        );
-      });
-    }
-
-    // Further filter by section if intent is specific
-    if (intentSections.length > 0) {
-      const sectionFiltered = filtered.filter(r => intentSections.includes(r.section));
-      // Only apply section filter if it returns results
-      if (sectionFiltered.length > 0) filtered = sectionFiltered;
-    }
-
-    filtered.sort((a, b) => (b.quality || 0) - (a.quality || 0));
-    const top = filtered.slice(0, 8);
-
-    if (top.length) process.stdout.write(`LOCAL DB: found ${top.length} curated resources\n`);
-    return top;
-  } catch (e) {
-    process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
-    return [];
-  }
-}
-
-// Format local resources as search context
-function formatLocalResources(resources) {
-  if (!resources.length) return "";
-  return resources.map(r =>
-    `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE]
-URL: ${r.url || r.file_url}
-Extrait: ${r.description || ""} (Source: ${r.source || "Vérifié"}, Qualité: ${r.quality}/10)`
-  ).join("
----
-");
 }
 
 // ─── Database lookup ──────────────────────────────────────────────
@@ -461,7 +399,6 @@ RÈGLES ABSOLUES :
 3. Si une section n'a AUCUN résultat dans les données → NE L'AFFICHE PAS DU TOUT, même pas le titre
 4. Ne génère JAMAIS une URL de toi-même
 5. Ne complète JAMAIS avec tes propres connaissances si les données sont vides pour une section
-6. Les ressources marquées [RESSOURCE VÉRIFIÉE] sont des ressources curées manuellement — affiche-les EN PREMIER dans leur section avec le badge ✓ Vérifié
 
 FORMAT — dans cet ordre, UNIQUEMENT si la section a des données réelles :
 ### 🔬 Articles les plus cités (minimum 5)
@@ -495,41 +432,10 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 1: Always query local curated resources first ────────
-    // Local DB is ALWAYS queried — even on cache hit — because you add new resources regularly
-    const earlyKeywords = lastMessage
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9 ]/g, " ")
-      .split(/\s+/)
-      .filter(w => w.length > 3)
-      .filter(w => !["pour","dans","avec","cette","quel","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
-      .slice(0, 6);
-
-    const localResources = await getLocalResources([], earlyKeywords);
-    const localFormatted = formatLocalResources(localResources);
-
-    // ── Step 2: Check query cache ──────────────────────────────────
+    // ── Step 1: Check database first ──────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
-      // Cache hit — but inject fresh local resources into the cached reply
-      let reply = dbResult.result;
-      if (localFormatted) {
-        // Prepend verified resources section if not already present
-        if (!reply.includes("✓ Vérifié") && !reply.includes("RESSOURCE VÉRIFIÉE")) {
-          reply = `### ✅ Ressources vérifiées MindBase
-${localResources.map(r => `**${r.title}** ✓
-${r.description}
-${r.url || r.file_url}`).join("
-
-")}
-
----
-
-` + reply;
-        }
-      }
-      return res.json({ reply, source: "database" });
+      return res.json({ reply: dbResult.result, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
@@ -539,19 +445,6 @@ ${r.url || r.file_url}`).join("
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
-
-    // ── Extract keywords for local DB lookup ────────────────────
-    // Simple keyword extraction from the question
-    const keywords = lastMessage
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9 ]/g, " ")
-      .split(/\s+/)
-      .filter(w => w.length > 3)
-      .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
-      .slice(0, 6);
-
-    process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
@@ -595,7 +488,6 @@ ${r.url || r.file_url}`).join("
     ]);
 
     const sections = [
-      localFormatted  && `[RESSOURCES VÉRIFIÉES — Base locale MindBase]\n${localFormatted}`,
       pubmed          && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
       recommendations && `[RECOMMANDATIONS & PROTOCOLES]\n${recommendations}`,
       books           && `[LIVRES]\n${books}`,
