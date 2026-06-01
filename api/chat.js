@@ -572,14 +572,18 @@ export default async function handler(req, res) {
 
     // ── Extract keywords for local DB lookup ────────────────────
     // Simple keyword extraction from the question
-    const keywords = lastMessage
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9 ]/g, " ")
-      .split(/\s+/)
-      .filter(w => w.length > 3)
-      .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
-      .slice(0, 6);
+    // Extract keywords — include both normalized words AND original acronyms (TDAH, TCA etc)
+    const acronyms = lastMessage.match(/\b[A-Z]{2,5}\b/g) || [];
+    const keywords = [
+      ...acronyms.map(a => a.toLowerCase()),
+      ...lastMessage
+        .toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9 ]/g, " ")
+        .split(/\s+/)
+        .filter(w => w.length > 3)
+        .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire","ressources","completes","complètes","livres","videos","réseaux","sociaux","recherches","protocoles"].includes(w))
+    ].filter((w, i, arr) => arr.indexOf(w) === i).slice(0, 8);
 
     process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
     process.stdout.write("INTENT: " + JSON.stringify(intentSections) + "\n");
@@ -678,7 +682,7 @@ RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5
           { role: "system", content: SYSTEM_PROMPT },
           ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 4000,
+        max_tokens: 5000,
         temperature: 0.2,
       }),
     });
