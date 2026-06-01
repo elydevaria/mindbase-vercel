@@ -55,25 +55,18 @@ function normalizeQuery(q) {
 }
 
 // ─── Local curated resources ─────────────────────────────────
-// Uses Mistral to extract topic tags, then matches against local_resources table
-async function getLocalResources(question, sections) {
+async function getLocalResources(question) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return "";
 
-    // Step 1: Fetch all local resources
+    // Fetch all resources
     const data = await supaFetch(
       "local_resources?order=quality.desc&limit=200&select=id,title,description,url,file_url,section,source,quality,topics"
     );
+    if (!Array.isArray(data) || !data.length) return "";
 
-    if (!Array.isArray(data) || !data.length) {
-      process.stdout.write("LOCAL DB: empty table\n");
-      return "";
-    }
-
-    process.stdout.write(`LOCAL DB: ${data.length} resources in table\n`);
-
-    // Step 2: Ask Mistral to extract topic tags from question
-    // Return exact tags that would be in the local_resources topics array
+    // Ask Mistral: what is the main topic of this question?
+    // Return ONLY the topic string as it would appear in the topics column
     const tagRes = await fetch(MISTRAL_API, {
       method: "POST",
       headers: {
@@ -82,20 +75,11 @@ async function getLocalResources(question, sections) {
       },
       body: JSON.stringify({
         model: "mistral-small-latest",
-        max_tokens: 60,
+        max_tokens: 20,
         temperature: 0,
         messages: [{
           role: "system",
-          content: `Tu extrais UNIQUEMENT les tags du SUJET PRINCIPAL de la question — pas les comorbidités, pas les sujets connexes.
-Règles strictes:
-- "TDAH adulte" → ["tdah","adulte"] — PAS anxiete, PAS depression
-- "dépression résistante" → ["depression"] — PAS anxiete
-- "troubles anxieux enfant" → ["anxiete","enfant"] — PAS tdah
-- "autisme diagnostic" → ["autisme","tsa","diagnostic"]
-- Si la question parle de "ressources complètes" sur X → tags = X seulement
-
-Tags disponibles: tdah, adhd, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, tsa, bipolaire, addiction, burnout, enfant, adolescent, adulte, famille, diagnostic, traitement, prise-en-charge.
-Réponds UNIQUEMENT avec un array JSON. Maximum 4 tags.`
+          content: "Réponds avec UN SEUL mot en minuscules sans accents qui correspond au sujet principal. Uniquement parmi: tdah, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, bipolaire, addiction, burnout. Rien d'autre."
         }, {
           role: "user",
           content: question
@@ -104,46 +88,28 @@ Réponds UNIQUEMENT avec un array JSON. Maximum 4 tags.`
     });
 
     const tagData = await tagRes.json();
-    const tagText = tagData.choices?.[0]?.message?.content || "[]";
-    const tagMatch = tagText.match(/\[[\s\S]*?\]/);
-    const tags = tagMatch ? JSON.parse(tagMatch[0]).map(t => t.toLowerCase().trim()) : [];
+    const topic = (tagData.choices?.[0]?.message?.content || "").toLowerCase().trim().replace(/[^a-z]/g, "");
+    process.stdout.write(`LOCAL DB: topic="${topic}"\n`);
+    if (!topic) return "";
 
-    process.stdout.write(`LOCAL DB: Mistral tags = ${JSON.stringify(tags)}\n`);
+    // Simple check: does the topics array contain this topic string?
+    const matches = data.filter(r =>
+      (r.topics || []).some(t => t.toLowerCase().replace(/[^a-z]/g, "") === topic)
+    );
 
-    if (!tags.length) return "";
-
-    // Step 3: Match resources — topic must exactly equal one of the tags
-    const matches = data.filter(r => {
-      const topicList = (r.topics || []).map(t => t.toLowerCase().trim());
-      return tags.some(tag => topicList.includes(tag));
-    });
-
-    process.stdout.write(`LOCAL DB: ${matches.length} matches\n`);
+    process.stdout.write(`LOCAL DB: ${matches.length} matches for "${topic}"\n`);
     if (!matches.length) return "";
 
-    // Group by section
     const grouped = {};
     matches.slice(0, 8).forEach(r => {
       const sec = r.section || "protocols";
       if (!grouped[sec]) grouped[sec] = [];
       const url = (r.url || r.file_url || "").replace(/\$\d+$/, "").trim();
-      grouped[sec].push(
-        `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${url}\nExtrait: ${r.description || ""}`
-      );
+      grouped[sec].push(`Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${url}\nExtrait: ${r.description || ""}`);
     });
 
     return Object.entries(grouped).map(([sec, items]) => {
-      const label = {
-        protocols: "RECOMMANDATIONS & PROTOCOLES",
-        pubmed: "PUBMED",
-        books: "LIVRES",
-        videos: "VIDÉOS YOUTUBE",
-        instagram: "INSTAGRAM",
-        facebook: "FACEBOOK",
-        linkedin: "LINKEDIN",
-        reddit: "REDDIT",
-        forums: "FORUMS",
-      }[sec] || sec.toUpperCase();
+      const label = { protocols:"RECOMMANDATIONS & PROTOCOLES", pubmed:"PUBMED", books:"LIVRES", videos:"VIDÉOS YOUTUBE", instagram:"INSTAGRAM", facebook:"FACEBOOK", linkedin:"LINKEDIN", reddit:"REDDIT", forums:"FORUMS" }[sec] || sec.toUpperCase();
       return `[${label} — RESSOURCES VÉRIFIÉES MindBase]\n${items.join("\n---\n")}`;
     }).join("\n\n===\n\n");
 
@@ -538,7 +504,7 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
     // ── Step 1: Always run local DB first (0 credits, always fresh) ─
-    const earlyLocal = await getLocalResources(lastMessage, []);
+    const earlyLocal = await getLocalResources(lastMessage);
 
     // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
@@ -614,7 +580,7 @@ export default async function handler(req, res) {
     process.stdout.write("QUERY recommendations: " + JSON.stringify(q.recommendations?.slice(0,60)) + "\n");
 
     // ── Local curated resources — always runs, 0 API credits ────
-    const localResults = await getLocalResources(lastMessage, intentSections);
+    const localResults = await getLocalResources(lastMessage);
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
