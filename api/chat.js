@@ -54,26 +54,42 @@ function normalizeQuery(q) {
 async function getLocalResources(intentSections, keywords) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return [];
+    if (!keywords.length) return [];
 
-    // Build topic filter from keywords
-    // Try each keyword against the topics array
-    const topicFilters = keywords.map(k =>
-      `topics.cs.{${k}}`
-    ).join(',');
-
-    // Also filter by relevant sections
-    const sectionFilter = intentSections.length > 0
-      ? `&section=in.(${intentSections.join(',')})`
-      : '';
-
-    const data = await supaFetch(
-      `local_resources?or=(${topicFilters})${sectionFilter}&order=quality.desc&limit=10&select=title,description,url,file_url,section,source,quality`
+    // Use overlap operator (@>) for each keyword separately
+    // Run parallel queries for each keyword then deduplicate
+    const queries = keywords.slice(0, 3).map(k =>
+      supaFetch(
+        `local_resources?topics=cs.{${encodeURIComponent(k)}}&order=quality.desc&limit=5&select=id,title,description,url,file_url,section,source,quality`
+      )
     );
 
-    if (!Array.isArray(data) || data.length === 0) return [];
+    const results = await Promise.all(queries);
+    
+    // Merge and deduplicate by id
+    const seen = new Set();
+    const merged = [];
+    for (const r of results) {
+      if (!Array.isArray(r)) continue;
+      for (const item of r) {
+        if (item.id && !seen.has(item.id)) {
+          seen.add(item.id);
+          merged.push(item);
+        }
+      }
+    }
 
-    process.stdout.write(`LOCAL DB: found ${data.length} curated resources\n`);
-    return data;
+    // Filter by section if intent is specific
+    const filtered = intentSections.length > 0
+      ? merged.filter(r => intentSections.includes(r.section))
+      : merged;
+
+    // Sort by quality
+    filtered.sort((a, b) => (b.quality || 0) - (a.quality || 0));
+    const top = filtered.slice(0, 8);
+
+    if (top.length) process.stdout.write(`LOCAL DB: found ${top.length} curated resources\n`);
+    return top;
   } catch (e) {
     process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
     return [];
