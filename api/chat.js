@@ -48,6 +48,50 @@ function normalizeQuery(q) {
     .slice(0, 200);
 }
 
+// ─── Local curated resources lookup ──────────────────────────
+// Searches your manually curated local_resources table
+// Returns verified resources that match the query topics
+async function getLocalResources(intentSections, keywords) {
+  try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return [];
+
+    // Build topic filter from keywords
+    // Try each keyword against the topics array
+    const topicFilters = keywords.map(k =>
+      `topics.cs.{${k}}`
+    ).join(',');
+
+    // Also filter by relevant sections
+    const sectionFilter = intentSections.length > 0
+      ? `&section=in.(${intentSections.join(',')})`
+      : '';
+
+    const data = await supaFetch(
+      `local_resources?or=(${topicFilters})${sectionFilter}&order=quality.desc&limit=10&select=title,description,url,file_url,section,source,quality`
+    );
+
+    if (!Array.isArray(data) || data.length === 0) return [];
+
+    process.stdout.write(`LOCAL DB: found ${data.length} curated resources\n`);
+    return data;
+  } catch (e) {
+    process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
+    return [];
+  }
+}
+
+// Format local resources as search context
+function formatLocalResources(resources) {
+  if (!resources.length) return "";
+  return resources.map(r =>
+    `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE]
+URL: ${r.url || r.file_url}
+Extrait: ${r.description || ""} (Source: ${r.source || "Vérifié"}, Qualité: ${r.quality}/10)`
+  ).join("
+---
+");
+}
+
 // ─── Database lookup ──────────────────────────────────────────────
 // Checks if we have a stored result for this query
 // Returns: { result, sections, fromDb: true } or null
@@ -399,6 +443,7 @@ RÈGLES ABSOLUES :
 3. Si une section n'a AUCUN résultat dans les données → NE L'AFFICHE PAS DU TOUT, même pas le titre
 4. Ne génère JAMAIS une URL de toi-même
 5. Ne complète JAMAIS avec tes propres connaissances si les données sont vides pour une section
+6. Les ressources marquées [RESSOURCE VÉRIFIÉE] sont des ressources curées manuellement — affiche-les EN PREMIER dans leur section avec le badge ✓ Vérifié
 
 FORMAT — dans cet ordre, UNIQUEMENT si la section a des données réelles :
 ### 🔬 Articles les plus cités (minimum 5)
@@ -446,8 +491,22 @@ export default async function handler(req, res) {
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
 
+    // ── Extract keywords for local DB lookup ────────────────────
+    // Simple keyword extraction from the question
+    const keywords = lastMessage
+      .toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter(w => w.length > 3)
+      .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
+      .slice(0, 6);
+
+    process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
+
     // ── Run only relevant searches in parallel ────────────────────
     const [
+      localResources,
       recommendations,
       pubmed,
       books,
@@ -458,6 +517,8 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
+      // Local curated database — always runs, 0 API credits
+      getLocalResources(intentSections, keywords),
       has("protocols") ? braveSearch(
         `${q.recommendations} (site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
         baseCount
@@ -487,7 +548,11 @@ export default async function handler(req, res) {
       ) : Promise.resolve(""),
     ]);
 
+    // Format local resources and prepend to sections
+    const localFormatted = formatLocalResources(localResources);
+
     const sections = [
+      localFormatted  && `[RESSOURCES VÉRIFIÉES — Base locale MindBase]\n${localFormatted}`,
       pubmed          && `[PUBMED — Articles cités & Recherches récentes]\n${pubmed}`,
       recommendations && `[RECOMMANDATIONS & PROTOCOLES]\n${recommendations}`,
       books           && `[LIVRES]\n${books}`,
