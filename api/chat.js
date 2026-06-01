@@ -93,8 +93,15 @@ async function getLocalResources(question) {
 
     const matches = data.filter(r =>
       (r.topics || []).some(t => {
-        const n = t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
-        return n === topic || n.includes(topic) || topic.includes(n);
+        // Normalize both sides: lowercase, remove accents, replace hyphens with nothing
+        const normalize = s => s.toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          .replace(/[-_]/g, "")  // remove hyphens/underscores
+          .replace(/[^a-z0-9]/g, ""); // keep only alphanumeric
+        const nt = normalize(t);
+        const nk = normalize(topic);
+        process.stdout.write(`  comparing topic="${nt}" vs keyword="${nk}"\n`);
+        return nt === nk || nt.includes(nk) || nk.includes(nt);
       })
     );
 
@@ -511,44 +518,9 @@ export default async function handler(req, res) {
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
-      // Simply prepend local resources before cached result — no Mistral needed
-      // Format them to match the existing response style
-      let reply = dbResult.result;
-      if (earlyLocal) {
-        // Parse grouped sections and insert each before its matching section in the reply
-        const localSections = earlyLocal.split("\n\n===\n\n");
-        localSections.forEach(section => {
-          const labelMatch = section.match(/\[([^\]]+)\]/);
-          if (!labelMatch) return;
-          const label = labelMatch[1];
-          // Map to emoji header used in the reply
-          const headerMap = {
-            "RECOMMANDATIONS": "📄 Recommandations",
-            "PROTOCOLES": "📋 Protocoles",
-            "PUBMED": "🔬",
-            "LIVRES": "📚",
-            "YOUTUBE": "▶️",
-            "INSTAGRAM": "📸",
-            "FACEBOOK": "👥",
-            "LINKEDIN": "🔗",
-            "REDDIT": "💬",
-            "FORUMS": "💬",
-          };
-          const key = Object.keys(headerMap).find(k => label.toUpperCase().includes(k));
-          const emoji = key ? headerMap[key] : "✅";
-          // Extract just the resource items
-          const items = section.replace(/\[[^\]]+\]\n/, "");
-          const formatted = items.split("\n---\n").map(item => {
-            const lines = item.split("\n");
-            const title = lines[0]?.replace("Titre: ", "") || "";
-            const url = lines[1]?.replace("URL: ", "").replace(/\$\d+$/, "").trim() || "";
-            const desc = lines[2]?.replace("Extrait: ", "") || "";
-            return `- **${title}**\n  ${desc}\n  ${url}`;
-          }).join("\n");
-          // Prepend to reply as a verified section
-          reply = `### ${emoji} ${label.split(" — ")[0]}\n> ✅ Ressources vérifiées MindBase\n${formatted}\n\n` + reply;
-        });
-      }
+      const reply = earlyLocal
+        ? `### ✅ Ressources vérifiées MindBase\n${earlyLocal.split("\n\n===\n\n").map(s => s.replace(/\[[^\]]+\]\n/, "")).join("\n\n")}\n\n---\n\n` + dbResult.result
+        : dbResult.result;
       return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
@@ -581,7 +553,7 @@ export default async function handler(req, res) {
     process.stdout.write("QUERY recommendations: " + JSON.stringify(q.recommendations?.slice(0,60)) + "\n");
 
     // ── Local curated resources — always runs, 0 API credits ────
-    const localResults = await getLocalResources(lastMessage);
+    const localResults = earlyLocal; // reuse already fetched local results
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
