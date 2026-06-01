@@ -67,22 +67,30 @@ async function getLocalResources(question, sections) {
     process.stdout.write(`LOCAL DB: fetched ${Array.isArray(data) ? data.length : 0} total resources\n`);
     if (!Array.isArray(data) || !data.length) return "";
 
-    // Extract meaningful words — keep accented chars, just lowercase
+    // Extract meaningful keywords — only words 4+ chars, strip stopwords
+    const STOPWORDS = new Set(["pour","dans","avec","cette","quel","quels","quelle","comment",
+      "trouver","donne","moi","les","des","une","sur","par","que","qui","est","sont",
+      "plus","aussi","mais","avoir","faire","niveau","preuve","formation","résultats",
+      "résultat","résultats","résultats","quelles","leurs","votre","notre","entre"]);
+
     const words = question.toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove accents for matching
       .split(/\s+/)
-      .map(w => w.replace(/[^a-z0-9àâäéèêëîïôöùûüç]/g, ""))
-      .filter(w => w.length > 2)
-      .filter(w => !["pour","dans","avec","cette","quel","comment","trouver","donne","les","des","une","sur","par","que","qui","est","sont","moi"].includes(w));
+      .map(w => w.replace(/[^a-z0-9]/g, ""))
+      .filter(w => w.length >= 4)  // minimum 4 chars — avoids partial matches
+      .filter(w => !STOPWORDS.has(w));
 
     process.stdout.write(`LOCAL DB: keywords = ${JSON.stringify(words)}\n`);
 
     const matches = data.filter(r => {
-      const topics = (r.topics || []).join(" ").toLowerCase();
-      const title = (r.title || "").toLowerCase();
-      const desc = (r.description || "").toLowerCase();
-      // Match if ANY keyword appears anywhere in topics, title or description
-      return words.some(w => topics.includes(w) || title.includes(w) || desc.includes(w));
-      // Note: removed section filter — show all matching resources regardless of section
+      // Normalize topics and title for comparison (remove accents)
+      const normalize = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const topics = (r.topics || []).map(normalize).join(" ");
+      const title = normalize(r.title || "");
+
+      // Only match against TOPICS — not title/description
+      // Topics are hand-curated exact terms so matching is precise
+      return words.some(w => topics.split(/\s+/).some(t => t === w || t.startsWith(w)));
     });
 
     process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
