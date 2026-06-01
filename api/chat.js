@@ -12,6 +12,12 @@ const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function supaFetch(path, method = "GET", body) {
   try {
+    if (!SUPABASE_URL || !SUPABASE_KEY) return null;
+    
+    // Safety check — ensure URL is valid before fetching
+    const url = `${SUPABASE_URL}/rest/v1/${path}`;
+    new URL(url); // throws if invalid
+
     const headers = {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
@@ -20,7 +26,7 @@ async function supaFetch(path, method = "GET", body) {
     if (method === "POST") headers["Prefer"] = "return=representation";
     if (method === "PATCH") headers["Prefer"] = "return=representation";
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    const res = await fetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -493,7 +499,7 @@ export default async function handler(req, res) {
     // Local DB is ALWAYS queried — even on cache hit — because you add new resources regularly
     const earlyKeywords = lastMessage
       .toLowerCase()
-      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9 ]/g, " ")
       .split(/\s+/)
       .filter(w => w.length > 3)
@@ -538,7 +544,7 @@ ${r.url || r.file_url}`).join("
     // Simple keyword extraction from the question
     const keywords = lastMessage
       .toLowerCase()
-      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9 ]/g, " ")
       .split(/\s+/)
       .filter(w => w.length > 3)
