@@ -54,37 +54,32 @@ function normalizeQuery(q) {
 async function getLocalResources(intentSections, keywords) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return [];
-    if (!keywords.length) return [];
 
-    // PostgREST array contains syntax: topics=cs.{"keyword"}
-    // Must use double quotes inside curly braces, properly URL-encoded
-    const queries = keywords.slice(0, 3).map(k => {
-      // Encode: {"keyword"} → %7B%22keyword%22%7D
-      const filter = encodeURIComponent(`{"${k}"}`);
-      return supaFetch(
-        `local_resources?topics=cs.${filter}&order=quality.desc&limit=5&select=id,title,description,url,file_url,section,source,quality`
-      );
-    });
+    // Fetch all resources — simpler than complex PostgREST array filters
+    // Filter in JS — table will stay small (<1000 rows) so this is fine
+    const data = await supaFetch(
+      `local_resources?order=quality.desc&limit=200&select=id,title,description,url,file_url,section,source,quality,topics`
+    );
 
-    const results = await Promise.all(queries);
+    if (!Array.isArray(data) || data.length === 0) return [];
 
-    // Merge and deduplicate by id
-    const seen = new Set();
-    const merged = [];
-    for (const r of results) {
-      if (!Array.isArray(r)) continue;
-      for (const item of r) {
-        if (item.id && !seen.has(item.id)) {
-          seen.add(item.id);
-          merged.push(item);
-        }
-      }
+    // Filter by keywords against topics array
+    let filtered = data;
+    if (keywords.length > 0) {
+      filtered = data.filter(r => {
+        const topics = r.topics || [];
+        return keywords.some(k =>
+          topics.some(t => t.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(t.toLowerCase()))
+        );
+      });
     }
 
-    // Filter by section if intent is specific
-    const filtered = intentSections.length > 0
-      ? merged.filter(r => intentSections.includes(r.section))
-      : merged;
+    // Further filter by section if intent is specific
+    if (intentSections.length > 0) {
+      const sectionFiltered = filtered.filter(r => intentSections.includes(r.section));
+      // Only apply section filter if it returns results
+      if (sectionFiltered.length > 0) filtered = sectionFiltered;
+    }
 
     filtered.sort((a, b) => (b.quality || 0) - (a.quality || 0));
     const top = filtered.slice(0, 8);
