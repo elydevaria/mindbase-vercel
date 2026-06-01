@@ -616,6 +616,33 @@ export default function MindBase() {
         </div>
 
         <div style={{ padding: isMobile ? "10px 12px 14px" : "14px 24px 18px", background:"#fff", borderTop:"1px solid #e2ddd5" }}>
+          {/* Quick pathology chips */}
+          <div style={{ marginBottom:10, paddingBottom:8, borderBottom:"1px solid #f0ede6" }}>
+            <div style={{ fontSize:10, color:"#a09a93", textTransform:"uppercase", letterSpacing:"0.07em", fontWeight:500, marginBottom:6 }}>🔍 Pathologies courantes <span style={{ textTransform:"none", letterSpacing:0, fontSize:10, color:"#c8c0b5" }}>— cliquez pour rechercher</span></div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+            {[
+              { label:"TDAH adulte", full:"trouble déficit de l'attention avec hyperactivité chez l'adulte (TDAH)" },
+              { label:"Dépression", full:"dépression et épisode dépressif caractérisé" },
+              { label:"Anxiété", full:"troubles anxieux et anxiété généralisée" },
+              { label:"TSPT", full:"trouble de stress post-traumatique (TSPT)" },
+              { label:"TOC", full:"trouble obsessionnel compulsif (TOC)" },
+              { label:"Borderline", full:"trouble de la personnalité borderline (TPB)" },
+              { label:"TCA", full:"troubles des conduites alimentaires (TCA) — anorexie, boulimie" },
+              { label:"Schizophrénie", full:"schizophrénie et troubles psychotiques" },
+              { label:"Autisme", full:"trouble du spectre de l'autisme (TSA)" },
+              { label:"Bipolarité", full:"trouble bipolaire" },
+              { label:"Addictions", full:"addictions et troubles liés aux substances" },
+              { label:"Burn-out", full:"burn-out et épuisement professionnel" },
+            ].map(({ label, full }) => (
+              <button key={label} onClick={() => sendMessage(`Ressources complètes sur ${full} — protocoles, livres, vidéos, réseaux sociaux, recherches`)}
+                style={{ padding:"4px 10px", border:"1px solid #e2ddd5", borderRadius:20, background:"#f5f3ee", fontSize:11, cursor:"pointer", color:"#4a4540", fontFamily:"system-ui,sans-serif", transition:"all 0.15s", whiteSpace:"nowrap" }}
+                onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.borderColor="#a8cdb5";e.currentTarget.style.color="#2d5a3d";}}
+                onMouseLeave={e=>{e.currentTarget.style.background="#f5f3ee";e.currentTarget.style.borderColor="#e2ddd5";e.currentTarget.style.color="#4a4540";}}>
+                {label}
+              </button>
+            ))}
+            </div>
+          </div>
           <div style={{ display:"flex", gap:8, background:"#f0ede6", border:"1px solid #cec9bf", borderRadius:14, padding:"6px 6px 6px 14px" }}>
             <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage(input);}}} placeholder={isMobile ? "Posez votre question..." : "Ex : ressources TDAH adulte, livres dépression Fnac..."} disabled={loading} style={{ flex:1, border:"none", background:"none", fontSize: isMobile ? 14 : 13, color:"#1c1917", outline:"none", fontFamily:"system-ui,sans-serif" }} />
             <button onClick={()=>setAnalyseOpen(true)} title="Analyser PDFs et liens" style={{ padding:"8px 10px", background:"#f0ede6", border:"1px solid #cec9bf", borderRadius:10, fontSize:16, cursor:"pointer", flexShrink:0, color:"#6b6560" }}>📎</button>

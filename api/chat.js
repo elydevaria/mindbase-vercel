@@ -55,77 +55,75 @@ function normalizeQuery(q) {
 }
 
 // ─── Local curated resources ─────────────────────────────────
-// Fetches ALL resources then filters in JS — no complex PostgREST
-async function getLocalResources(question, sections) {
+async function getLocalResources(question) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return "";
 
-    const data = await supaFetch(
-      "local_resources?order=quality.desc&limit=200&select=title,description,url,file_url,section,source,quality,topics"
+    // Fetch all resources
+    const dataPromise = supaFetch(
+      "local_resources?order=quality.desc&limit=200&select=id,title,description,url,file_url,section,source,quality,topics"
     );
 
-    process.stdout.write(`LOCAL DB: fetched ${Array.isArray(data) ? data.length : 0} total resources\n`);
-    if (!Array.isArray(data) || !data.length) return "";
+    // Ask Mistral for main topic — with timeout so it never blocks
+    const topicPromise = Promise.race([
+      fetch(MISTRAL_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          max_tokens: 10,
+          temperature: 0,
+          messages: [
+            { role: "system", content: "Un mot en minuscules sans accents parmi: tdah, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, bipolaire, addiction, burnout. Rien d'autre." },
+            { role: "user", content: question }
+          ]
+        })
+      }).then(r => r.json()).then(d => d.choices?.[0]?.message?.content?.toLowerCase().trim().replace(/[^a-z]/g, "") || ""),
+      new Promise(resolve => setTimeout(() => resolve(""), 3000)) // 3s timeout
+    ]);
 
-    // Extract meaningful keywords — only words 4+ chars, strip stopwords
-    const STOPWORDS = new Set(["pour","dans","avec","cette","quel","quels","quelle","comment",
-      "trouver","donne","moi","les","des","une","sur","par","que","qui","est","sont",
-      "plus","aussi","mais","avoir","faire","niveau","preuve","formation","résultats",
-      "résultat","résultats","résultats","quelles","leurs","votre","notre","entre"]);
+    const [data, topic] = await Promise.all([dataPromise, topicPromise]);
 
-    const words = question.toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove accents for matching
-      .split(/\s+/)
-      .map(w => w.replace(/[^a-z0-9]/g, ""))
-      .filter(w => w.length >= 4)  // minimum 4 chars — avoids partial matches
-      .filter(w => !STOPWORDS.has(w));
+    process.stdout.write(`LOCAL DB: topic="${topic}" rows=${Array.isArray(data) ? data.length : 0}\n`);
 
-    process.stdout.write(`LOCAL DB: keywords = ${JSON.stringify(words)}\n`);
+    if (!topic || !Array.isArray(data) || !data.length) return "";
 
-    const matches = data.filter(r => {
-      // Normalize topics and title for comparison (remove accents)
-      const normalize = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const topics = (r.topics || []).map(normalize).join(" ");
-      const title = normalize(r.title || "");
+    const matches = data.filter(r =>
+      (r.topics || []).some(t => {
+        // Normalize both sides: lowercase, remove accents, replace hyphens with nothing
+        const normalize = s => s.toLowerCase()
+          .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          .replace(/[-_]/g, "")  // remove hyphens/underscores
+          .replace(/[^a-z0-9]/g, ""); // keep only alphanumeric
+        const nt = normalize(t);
+        const nk = normalize(topic);
+        process.stdout.write(`  comparing topic="${nt}" vs keyword="${nk}"\n`);
+        return nt === nk || nt.includes(nk) || nk.includes(nt);
+      })
+    );
 
-      // Only match against TOPICS — not title/description
-      // Topics are hand-curated exact terms so matching is precise
-      return words.some(w => topics.split(/\s+/).some(t => t === w || t.startsWith(w)));
-    });
-
-    process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
+    process.stdout.write(`LOCAL DB: ${matches.length} matches\n`);
     if (!matches.length) return "";
 
-    // Group by section so they can be injected into the right section
     const grouped = {};
-    matches.slice(0, 8).forEach(r => {
+    matches.slice(0, 6).forEach(r => {
       const sec = r.section || "protocols";
       if (!grouped[sec]) grouped[sec] = [];
-      // Clean URL — remove any $0 artifacts
       const url = (r.url || r.file_url || "").replace(/\$\d+$/, "").trim();
-      grouped[sec].push(
-        `Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${url}\nExtrait: ${r.description || ""}`
-      );
+      grouped[sec].push(`Titre: ✓ ${r.title} [RESSOURCE VÉRIFIÉE — ${r.source || "Curé"}]\nURL: ${url}\nExtrait: ${r.description || ""}`);
     });
 
-    // Return as labelled sections matching the search context format
     return Object.entries(grouped).map(([sec, items]) => {
-      const label = {
-        protocols: "RECOMMANDATIONS & PROTOCOLES",
-        pubmed: "PUBMED — Articles cités & Recherches récentes",
-        books: "LIVRES",
-        videos: "VIDÉOS YOUTUBE",
-        instagram: "INSTAGRAM",
-        facebook: "FACEBOOK",
-        linkedin: "LINKEDIN — Key Opinion Leaders",
-        reddit: "REDDIT",
-        forums: "FORUMS MÉDICAUX & PROFESSIONNELS",
-      }[sec] || sec.toUpperCase();
+      const label = { protocols:"RECOMMANDATIONS & PROTOCOLES", pubmed:"PUBMED", books:"LIVRES", videos:"VIDÉOS YOUTUBE" }[sec] || sec.toUpperCase();
       return `[${label} — RESSOURCES VÉRIFIÉES MindBase]\n${items.join("\n---\n")}`;
     }).join("\n\n===\n\n");
+
   } catch (e) {
     process.stdout.write("LOCAL DB ERROR: " + e.message + "\n");
-    return "";
+    return ""; // Never block on error
   }
 }
 
@@ -223,12 +221,20 @@ async function braveSearch(query, count = 5) {
       },
     });
     const data = await res.json();
+    process.stdout.write(`BRAVE: status=${res.status} results=${data.web?.results?.length || 0} query="${query.slice(0,60)}"\n`);
+    if (data.type === "ErrorResponse") {
+      process.stdout.write(`BRAVE ERROR RESPONSE: ${JSON.stringify(data)}\n`);
+      return "";
+    }
     const results = [];
     (data.web?.results || []).slice(0, count).forEach(r => {
       results.push(`Titre: ${r.title}\nURL: ${r.url}\nExtrait: ${r.description?.slice(0, 200) || ""}`);
     });
     return results.join("\n---\n");
-  } catch (e) { return ""; }
+  } catch (e) {
+    process.stdout.write("BRAVE ERROR: " + e.message + "\n");
+    return "";
+  }
 }
 
 // ─── Brave Video Search ───────────────────────────────────────────
@@ -514,50 +520,15 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
     // ── Step 1: Always run local DB first (0 credits, always fresh) ─
-    const earlyLocal = await getLocalResources(lastMessage, []);
+    const earlyLocal = await getLocalResources(lastMessage);
 
     // ── Step 2: Check query cache ──────────────────────────────────
     const dbResult = await getFromDatabase(lastMessage);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
-      // Simply prepend local resources before cached result — no Mistral needed
-      // Format them to match the existing response style
-      let reply = dbResult.result;
-      if (earlyLocal) {
-        // Parse grouped sections and insert each before its matching section in the reply
-        const localSections = earlyLocal.split("\n\n===\n\n");
-        localSections.forEach(section => {
-          const labelMatch = section.match(/\[([^\]]+)\]/);
-          if (!labelMatch) return;
-          const label = labelMatch[1];
-          // Map to emoji header used in the reply
-          const headerMap = {
-            "RECOMMANDATIONS": "📄 Recommandations",
-            "PROTOCOLES": "📋 Protocoles",
-            "PUBMED": "🔬",
-            "LIVRES": "📚",
-            "YOUTUBE": "▶️",
-            "INSTAGRAM": "📸",
-            "FACEBOOK": "👥",
-            "LINKEDIN": "🔗",
-            "REDDIT": "💬",
-            "FORUMS": "💬",
-          };
-          const key = Object.keys(headerMap).find(k => label.toUpperCase().includes(k));
-          const emoji = key ? headerMap[key] : "✅";
-          // Extract just the resource items
-          const items = section.replace(/\[[^\]]+\]\n/, "");
-          const formatted = items.split("\n---\n").map(item => {
-            const lines = item.split("\n");
-            const title = lines[0]?.replace("Titre: ", "") || "";
-            const url = lines[1]?.replace("URL: ", "").replace(/\$\d+$/, "").trim() || "";
-            const desc = lines[2]?.replace("Extrait: ", "") || "";
-            return `- **${title}**\n  ${desc}\n  ${url}`;
-          }).join("\n");
-          // Prepend to reply as a verified section
-          reply = `### ${emoji} ${label.split(" — ")[0]}\n> ✅ Ressources vérifiées MindBase\n${formatted}\n\n` + reply;
-        });
-      }
+      const reply = earlyLocal
+        ? `### ✅ Ressources vérifiées MindBase\n${earlyLocal.split("\n\n===\n\n").map(s => s.replace(/\[[^\]]+\]\n/, "")).join("\n\n")}\n\n---\n\n` + dbResult.result
+        : dbResult.result;
       return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
@@ -572,21 +543,25 @@ export default async function handler(req, res) {
 
     // ── Extract keywords for local DB lookup ────────────────────
     // Simple keyword extraction from the question
-    const keywords = lastMessage
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9 ]/g, " ")
-      .split(/\s+/)
-      .filter(w => w.length > 3)
-      .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire"].includes(w))
-      .slice(0, 6);
+    // Extract keywords — include both normalized words AND original acronyms (TDAH, TCA etc)
+    const acronyms = lastMessage.match(/\b[A-Z]{2,5}\b/g) || [];
+    const keywords = [
+      ...acronyms.map(a => a.toLowerCase()),
+      ...lastMessage
+        .toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9 ]/g, " ")
+        .split(/\s+/)
+        .filter(w => w.length > 3)
+        .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire","ressources","completes","complètes","livres","videos","réseaux","sociaux","recherches","protocoles"].includes(w))
+    ].filter((w, i, arr) => arr.indexOf(w) === i).slice(0, 8);
 
     process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
     process.stdout.write("INTENT: " + JSON.stringify(intentSections) + "\n");
     process.stdout.write("QUERY recommendations: " + JSON.stringify(q.recommendations?.slice(0,60)) + "\n");
 
     // ── Local curated resources — always runs, 0 API credits ────
-    const localResults = await getLocalResources(lastMessage, intentSections);
+    const localResults = earlyLocal; // reuse already fetched local results
 
     // ── Run only relevant searches in parallel ────────────────────
     const [
@@ -662,7 +637,7 @@ export default async function handler(req, res) {
 ${sections.join("\n\n---\n\n") || "Aucun résultat."}
 === FIN RÉSULTATS ===
 
-RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5 Forums. 3 lignes max. Couvre tout.`,
+RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes max par ressource. Couvre TOUTES les sections sans exception.`,
       },
     ];
 
@@ -678,7 +653,7 @@ RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5
           { role: "system", content: SYSTEM_PROMPT },
           ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 4000,
+        max_tokens: 5000,
         temperature: 0.2,
       }),
     });
