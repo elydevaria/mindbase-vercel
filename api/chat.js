@@ -86,7 +86,16 @@ async function getLocalResources(question, sections) {
         temperature: 0,
         messages: [{
           role: "system",
-          content: `Extrait les tags cliniques de la question. Réponds UNIQUEMENT avec un array JSON de tags courts en minuscules sans accents. Utilise ces tags standards: tdah, adhd, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, tsa, bipolaire, addiction, burnout, enfant, adolescent, adulte, famille, diagnostic, traitement, prise-en-charge, medicament, psychotherapie. Exemple: ["tdah","adulte","diagnostic"]`
+          content: `Tu extrais UNIQUEMENT les tags du SUJET PRINCIPAL de la question — pas les comorbidités, pas les sujets connexes.
+Règles strictes:
+- "TDAH adulte" → ["tdah","adulte"] — PAS anxiete, PAS depression
+- "dépression résistante" → ["depression"] — PAS anxiete
+- "troubles anxieux enfant" → ["anxiete","enfant"] — PAS tdah
+- "autisme diagnostic" → ["autisme","tsa","diagnostic"]
+- Si la question parle de "ressources complètes" sur X → tags = X seulement
+
+Tags disponibles: tdah, adhd, depression, anxiete, tspt, toc, borderline, tca, schizophrenie, autisme, tsa, bipolaire, addiction, burnout, enfant, adolescent, adulte, famille, diagnostic, traitement, prise-en-charge.
+Réponds UNIQUEMENT avec un array JSON. Maximum 4 tags.`
         }, {
           role: "user",
           content: question
