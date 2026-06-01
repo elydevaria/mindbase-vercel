@@ -83,14 +83,12 @@ async function getLocalResources(question, sections) {
     process.stdout.write(`LOCAL DB: keywords = ${JSON.stringify(words)}\n`);
 
     const matches = data.filter(r => {
-      // Normalize topics and title for comparison (remove accents)
       const normalize = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const topics = (r.topics || []).map(normalize).join(" ");
-      const title = normalize(r.title || "");
+      const topicList = (r.topics || []).map(normalize);
 
-      // Only match against TOPICS — not title/description
-      // Topics are hand-curated exact terms so matching is precise
-      return words.some(w => topics.split(/\s+/).some(t => t === w || t.startsWith(w)));
+      // Strict: at least one keyword must exactly match a topic word
+      // This prevents depression resources showing for TDAH queries
+      return keywords.some(k => topicList.some(t => t === k));
     });
 
     process.stdout.write(`LOCAL DB: ${matches.length} keyword matches\n`);
@@ -666,7 +664,7 @@ export default async function handler(req, res) {
 ${sections.join("\n\n---\n\n") || "Aucun résultat."}
 === FIN RÉSULTATS ===
 
-RAPPEL : URLs exactes uniquement. Respecte l'ordre. Min 5 articles PubMed. Max 5 Forums. 3 lignes max. Couvre tout.`,
+RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes max par ressource. Couvre TOUTES les sections sans exception.`,
       },
     ];
 
