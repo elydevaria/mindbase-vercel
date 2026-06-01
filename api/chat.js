@@ -567,7 +567,8 @@ export default async function handler(req, res) {
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
-    const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 8 : 6;
+    const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 10 : 7;
+    const protocolCount = has('protocols') && !isGeneral ? 10 : baseCount;
 
     // ── Extract keywords for local DB lookup ────────────────────
     // Simple keyword extraction from the question
@@ -581,6 +582,8 @@ export default async function handler(req, res) {
       .slice(0, 6);
 
     process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
+    process.stdout.write("INTENT: " + JSON.stringify(intentSections) + "\n");
+    process.stdout.write("QUERY recommendations: " + JSON.stringify(q.recommendations?.slice(0,60)) + "\n");
 
     // ── Local curated resources — always runs, 0 API credits ────
     const localResults = await getLocalResources(lastMessage, intentSections);
@@ -597,10 +600,20 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
+      // protocols: run both searches then merge
       has("protocols") ? braveSearch(
-        `${q.recommendations} (site:ameli.fr OR site:has-sante.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:apa.org OR site:who.int OR site:nimh.nih.gov OR site:inserm.fr OR site:sfpeada.fr)`,
-        baseCount
-      ) : Promise.resolve(""),
+        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
+        protocolCount
+      ).then(async (main) => {
+        const ameli = await braveSearch(`${q.reddit_fr} site:ameli.fr`, 5);
+        const seen = new Set();
+        return [...(ameli ? ameli.split("\n---\n") : []), ...(main ? main.split("\n---\n") : [])]
+          .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
+          .join("\n---\n");
+      }).catch(() => braveSearch(
+        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk)`,
+        protocolCount
+      )) : Promise.resolve(""),
       has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
       has("books") ? braveSearch(
         `${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`,
