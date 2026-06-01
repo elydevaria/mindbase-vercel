@@ -600,23 +600,20 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
-      // 2 credits — French sources + Ameli (domain only, Brave doesn't support subdirectory site:)
-      has("protocols") ? (async () => {
-        const [main, ameli] = await Promise.all([
-          braveSearch(
-            `${q.recommendations} (site:has-sante.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
-            protocolCount
-          ),
-          braveSearch(
-            `${q.recommendations} site:ameli.fr`,
-            5
-          ),
-        ]);
+      // protocols: run both searches then merge
+      has("protocols") ? braveSearch(
+        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
+        protocolCount
+      ).then(async (main) => {
+        const ameli = await braveSearch(`${q.recommendations} site:ameli.fr`, 4);
         const seen = new Set();
         return [...(ameli ? ameli.split("\n---\n") : []), ...(main ? main.split("\n---\n") : [])]
           .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
           .join("\n---\n");
-      })() : Promise.resolve(""),
+      }).catch(() => braveSearch(
+        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk)`,
+        protocolCount
+      )) : Promise.resolve(""),
       has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
       has("books") ? braveSearch(
         `${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`,
