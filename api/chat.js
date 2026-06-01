@@ -598,12 +598,25 @@ export default async function handler(req, res) {
       linkedin,
       forums,
     ] = await Promise.all([
-      // 1 credit — French sources first, then international
-      // Brave respects site: order so French sources appear first
-      has("protocols") ? braveSearch(
-        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
-        protocolCount
-      ) : Promise.resolve(""),
+      // 2 credits — French sources + dedicated Ameli path search
+      has("protocols") ? Promise.all([
+        // Credit 1 — HAS + Inserm + ANSM + NICE + Cochrane + WHO
+        braveSearch(
+          `${q.recommendations} (site:has-sante.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
+          protocolCount
+        ),
+        // Credit 2 — Ameli dedicated with exact mental health paths
+        braveSearch(
+          `${q.recommendations} (site:ameli.fr/assure/sante/themes/sante-mentale-de-l-adulte OR site:ameli.fr/assure/sante/themes)`,
+          5
+        ),
+      ]).then(([main, ameli]) => {
+        const seen = new Set();
+        // Ameli first, then main sources
+        return [...(ameli ? ameli.split("\n---\n") : []), ...(main ? main.split("\n---\n") : [])]
+          .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
+          .join("\n---\n");
+      }) : Promise.resolve(""),
       has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
       has("books") ? braveSearch(
         `${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`,
