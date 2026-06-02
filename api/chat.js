@@ -399,9 +399,9 @@ Réponds UNIQUEMENT avec ce JSON exact (pas de texte avant ni après):
   "facebook": "termes groupes Facebook francophones",
   "linkedin": "terme court pour profils LinkedIn praticiens",
   "forums": "termes forums médicaux professionnels français",
-  "recommendations": "requête bilingue HAS ANSM NICE Cochrane APA",
-  "pubmed_cited": "requête PubMed EN ANGLAIS avec termes MeSH précis pour méta-analyses et systematic reviews les plus citées — ex: major depressive disorder[MeSH] meta-analysis OR ADHD[MeSH] systematic review",
-  "pubmed_recent": "requête PubMed EN ANGLAIS pour essais randomisés récents 2022-2025 — ex: major depressive episode treatment randomized controlled trial 2023"
+  "recommendations": "requête précise incluant le nom exact du trouble + HAS ANSM NICE — ex: 'dépression épisode dépressif caractérisé recommandations HAS' ou 'TDAH adulte prise en charge ANSM'",
+  "pubmed_cited": "requête PubMed EN ANGLAIS très précise avec le terme MeSH exact du trouble — ex: 'major depressive disorder[MeSH] adults treatment systematic review' ou 'attention deficit disorder[MeSH] adults meta-analysis' — JAMAIS des termes généraux comme 'mental health' ou 'psychiatry'",
+  "pubmed_recent": "requête PubMed EN ANGLAIS précise avec le terme exact du trouble pour études 2022-2025 — ex: 'major depressive episode diagnosis adults 2023' ou 'ADHD adults treatment 2024' — JAMAIS 'mental health' ou termes trop généraux"
 }
 
 Règles pour "sections" :
@@ -412,7 +412,11 @@ Règles pour "sections" :
 - Question sur communautés/forums → ["reddit","forums","facebook"]
 - Question sur recherches/études → ["pubmed"]
 - Question générale ou "ressources complètes" → toutes les sections
-- Analyse intelligemment selon le contexte clinique`
+- Analyse intelligemment selon le contexte clinique
+
+RÈGLE ABSOLUE pour les requêtes : utilise TOUJOURS le nom exact du trouble dans chaque requête.
+Jamais de termes généraux comme "santé mentale" ou "psychiatrie" sauf si la question porte explicitement sur ces sujets.
+Ex: pour "épisode dépressif adulte" → toutes les requêtes doivent contenir "dépression" ou "épisode dépressif" ou "major depressive".`
         }]
       }),
     });
