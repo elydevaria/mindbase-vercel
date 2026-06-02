@@ -601,9 +601,11 @@ export default function MindBase() {
                   <div style={{ display:"flex", justifyContent:"flex-end", gap:6, marginTop:5, flexWrap:"wrap" }}>
                     {msg.conversational && (
                       <button onClick={()=>{
-                        // Extract topic from the assistant's response text
-                        const topic = msg.text.slice(0, 200).replace(/[#*\n]/g," ").trim();
-                        sendMessage(`Cherche-moi les ressources cliniques complètes sur ce sujet : ${topic.slice(0,100)}`);
+                        // Use the user's original question as topic, not the assistant's response
+                        const userMsgs = messages.filter(m => m.type === "user");
+                        const lastUserMsg = userMsgs[userMsgs.length - 1]?.text || "";
+                        const topic = lastUserMsg.slice(0, 80).replace(/[#*\n]/g," ").trim();
+                        sendMessage(`Ressources cliniques complètes sur : ${topic}`);
                       }}
                         style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", border:"1px solid #a8cdb5", borderRadius:20, background:"#eaf3ee", cursor:"pointer", fontSize:11, color:"#2d5a3d", fontFamily:"system-ui,sans-serif", fontWeight:500 }}>
                         🔍 Chercher les ressources
