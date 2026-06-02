@@ -600,7 +600,11 @@ export default function MindBase() {
                 {msg.type==="agent"&&(
                   <div style={{ display:"flex", justifyContent:"flex-end", gap:6, marginTop:5, flexWrap:"wrap" }}>
                     {msg.conversational && (
-                      <button onClick={()=>sendMessage("Oui, cherche-moi les ressources cliniques sur ce sujet")}
+                      <button onClick={()=>{
+                        // Extract topic from the assistant's response text
+                        const topic = msg.text.slice(0, 200).replace(/[#*\n]/g," ").trim();
+                        sendMessage(`Cherche-moi les ressources cliniques complètes sur ce sujet : ${topic.slice(0,100)}`);
+                      }}
                         style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", border:"1px solid #a8cdb5", borderRadius:20, background:"#eaf3ee", cursor:"pointer", fontSize:11, color:"#2d5a3d", fontFamily:"system-ui,sans-serif", fontWeight:500 }}>
                         🔍 Chercher les ressources
                       </button>
