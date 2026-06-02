@@ -519,6 +519,42 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
+    // ── Step 0: Detect if this is a conversational request ──────────
+    // If user asks to reformulate, summarise, explain, compare etc.
+    // → answer directly with Mistral, skip all searches entirely
+    const CONVERSATIONAL = /reformul|reforumle|résumé|resume|synthese|synthèse|explique|expliquer|compare|différence|difference|clarifi|traduis|traduit|simplifie|réécris|reecris|reformuler|peux.tu me|qu.est.ce que|c.est quoi|comment fonctionne|que signifie|définition|definition/i;
+    
+    if (CONVERSATIONAL.test(lastMessage)) {
+      // Conversational — answer using Mistral with conversation history only
+      process.stdout.write("CONVERSATIONAL request — skipping searches\n");
+      const convResponse = await fetch(MISTRAL_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          messages: [
+            { role: "system", content: `Tu es MindBase, assistant clinique expert en santé mentale pour praticiens français.
+Réponds directement à la demande :
+- Reformulation/synthèse avec contexte → utilise les messages précédents
+- Reformulation/synthèse sans contexte → demande poliment sur quel sujet ou texte
+- Question conceptuelle (définition, différence, explication) → réponds avec tes connaissances cliniques
+Toujours en français, concis et précis.` },
+            ...messages.slice(-10),
+          ],
+          max_tokens: 2000,
+          temperature: 0.3,
+        }),
+      });
+      const convData = await convResponse.json();
+      const convReply = convData.choices?.[0]?.message?.content || "Je n'ai pas pu générer une réponse.";
+      // Append resource offer at the end
+      const withOffer = convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet (protocoles, articles, livres, communautés) ?*";
+      return res.json({ reply: withOffer, conversational: true });
+    }
+
     // ── Step 1: Always run local DB first (0 credits, always fresh) ─
     const earlyLocal = await getLocalResources(lastMessage);
 
