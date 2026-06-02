@@ -14,7 +14,6 @@ async function supaFetch(path, method = "GET", body) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return null;
     
-    // Safety check — ensure URL is valid before fetching
     const url = `${SUPABASE_URL}/rest/v1/${path}`;
     new URL(url); // throws if invalid
 
@@ -505,11 +504,10 @@ export default async function handler(req, res) {
   const lastMessage = messages[messages.length - 1].content;
 
   try {
-    // ── Step 0: Verify Supabase connection ───────────────────────
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // Check if user explicitly asked for resources
+    // Check if user explicitly asked for resources via key phrase buttons
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
     let route = "search";
 
@@ -530,15 +528,14 @@ export default async function handler(req, res) {
       });
       const topicData = await topicRes.json();
       const extractedTopic = (topicData.choices?.[0]?.message?.content || "").trim().replace(/^["'«»\s]+|["'«»\s]+$/g, "");
-      process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
+      process.stdout.write(`TOPIC EXTRACTED VIA BUTTON: "${extractedTopic}"\n`);
 
       if (extractedTopic) {
-        // Swap out generic phrase with clean clinical term across context arrays
         messages[messages.length - 1] = { role: "user", content: extractedTopic };
         req._extractedTopic = extractedTopic;
       }
     } else {
-      // Standard dynamic evaluation if button was not explicitly selected
+      // ── Context-Aware 3-Way Router ──
       const routeRes = await fetch(MISTRAL_API, {
         method: "POST",
         headers: {
@@ -547,24 +544,45 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model: "mistral-small-latest",
-          max_tokens: 5,
+          max_tokens: 10,
           temperature: 0,
           messages: [
-            { role: "system", content: `Tu es un routeur. Lis la conversation et réponds UNIQUEMENT par "search" ou "answer".
-"search" = l'utilisateur cherche des ressources/protocoles/articles/livres/communautés sur un sujet clinique.
-"answer" = l'utilisateur veut une reformulation, synthèse, explication, définition, comparaison, ou envoie un texte à traiter.` },
+            { 
+              role: "system", 
+              content: `Tu es un routeur d'intentions cliniques. Lis attentivement la conversation et qualifie le TOUT DERNIER message de l'utilisateur. 
+Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
+
+"search"  = L'utilisateur demande explicitement, sous-entend ou continue de chercher des ressources, des protocoles, des articles, des recommandations (HAS, etc.) ou des liens.
+"explain" = L'utilisateur pose une question clinique de fond, demande une synthèse, une explication thérapeutique, une définition ou une comparaison de symptômes (réponse textuelle uniquement).
+"idle"    = L'utilisateur n'attend aucune action de recherche. Il dit simplement merci, valide une information ("ok top", "ça marche", "parfait"), salue ("bonsoir", "bonjour"), ou clôture chaleureusement l'échange.` 
+            },
             ...messages.slice(-6),
           ]
         }),
       });
+      
       const routeData = await routeRes.json();
-      route = (routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search";
+      const rawVerdict = (routeData.choices?.[0]?.message?.content || "search").toLowerCase();
+      
+      if (rawVerdict.includes("idle")) {
+        route = "idle";
+      } else if (rawVerdict.includes("explain")) {
+        route = "explain";
+      } else {
+        route = "search";
+      }
     }
 
-    process.stdout.write(`ROUTE: ${route}\n`);
+    process.stdout.write(`ROUTE DETERMINED: ${route}\n`);
 
-    if (route === "answer") {
-      process.stdout.write("CONVERSATIONAL — skipping searches\n");
+    // ── Handle Non-Search Routes (explain or idle) ─────────────────────
+    if (route === "explain" || route === "idle") {
+      process.stdout.write(`NON-SEARCH ROUTE (${route}) — skipping web/db calls\n`);
+      
+      const systemContext = route === "idle"
+        ? "Tu es MindBase. L'utilisateur te remercie, te salue ou valide tes informations. Réponds de manière brève (1-2 phrases maximum), chaleureuse et professionnelle en restant simplement à sa disposition."
+        : "Tu es MindBase, assistant clinique expert en santé mentale. Réponds de manière précise, structurée et purement textuelle à la question clinique de l'utilisateur en utilisant le contexte.";
+
       const convResponse = await fetch(MISTRAL_API, {
         method: "POST",
         headers: {
@@ -574,25 +592,28 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: "mistral-small-latest",
           messages: [
-            { role: "system", content: `Tu es MindBase, assistant clinique expert en santé mentale pour praticiens français.
-Réponds directement à la demande en utilisant le contexte de la conversation.
-Toujours en français, concis et précis.` },
+            { role: "system", content: systemContext },
             ...messages.slice(-10),
           ],
-          max_tokens: 2000,
+          max_tokens: route === "idle" ? 150 : 2000,
           temperature: 0.3,
         }),
       });
+      
       const convData = await convResponse.json();
-      const convReply = convData.choices?.[0]?.message?.content || "Je n'ai pas pu générer une réponse.";
-      const withOffer = convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*";
-      return res.json({ reply: withOffer, conversational: true });
+      const convReply = convData.choices?.[0]?.message?.content || "Je reste à votre disposition.";
+      
+      const finalReply = route === "explain" 
+        ? convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*"
+        : convReply;
+
+      return res.json({ reply: finalReply, conversational: true, extractedTopic: req._extractedTopic || null });
     }
 
-    // ── Bind query to clean extracted string safely for everything below ──
+    // ── Bind query to clean extracted string safely for search pipeline ──
     const effectiveQuery = req._extractedTopic || lastMessage;
 
-    // ── Step 1 & 2: Local Cache checks execute with the clean topic ──
+    // ── Local Database & Cache checks ──
     const earlyLocal = await getLocalResources(effectiveQuery);
     const dbResult = await getFromDatabase(effectiveQuery);
     
@@ -605,9 +626,8 @@ Toujours en français, concis et précis.` },
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Step 3: Intent detection processes the clean query term ──
+    // ── Query & Intent extraction for live search pipelines ──
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(effectiveQuery);
-    const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 10 : 7;
@@ -628,11 +648,10 @@ Toujours en français, concis et précis.` },
 
     process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
     process.stdout.write("INTENT: " + JSON.stringify(intentSections) + "\n");
-    process.stdout.write("QUERY recommendations: " + JSON.stringify(q.recommendations?.slice(0,60)) + "\n");
 
     const localResults = earlyLocal;
 
-    // ── Parallel Search Requests ──
+    // ── Parallel Web / Database Searches ──
     const [
       recommendations,
       pubmed,
