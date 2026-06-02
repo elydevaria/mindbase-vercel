@@ -1,8 +1,3 @@
-Here is the complete, fully integrated `chat-22.js` file.
-
-This version ensures that variable references are kept strictly in sync. When a user executes a pre-written template query, the `lastMessage` pointer is immediately aligned with the target terms. This forces `normalizeQuery()`, `getFromDatabase()`, and `storeInDatabase()` to consistently evaluate the same string matrix, guaranteeing immediate cache lookup fulfillment and zero token leakage.
-
-```javascript
 export const config = { maxDuration: 60 };
 
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
@@ -678,5 +673,3 @@ ${sections.join("\n\n---\n\n") || "Aucun résultat."}
     res.status(500).json({ error: err.message });
   }
 }
-
-```
