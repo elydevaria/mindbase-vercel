@@ -141,16 +141,11 @@ async function getFromDatabase(question) {
 
     const entry = data[0];
 
-    // Check freshness — stable content (protocols, books) valid 7 days
-    // Dynamic content (forums, reddit) valid 1 day
+    // Cache valid for 90 days
     const ageHours = (Date.now() - new Date(entry.last_searched).getTime()) / 3600000;
     const sections = entry.sections || [];
-    const hasDynamicSections = sections.some(s => ["reddit","forums","instagram"].includes(s));
-    const maxAge = hasDynamicSections ? 24 : 168; // 1 day or 7 days
-
-    if (ageHours > maxAge) {
-      // Entry is stale — will refresh but keep the id for update
-      return { stale: true, id: entry.id, sections };
+    if (ageHours > 2160) { // 90 days
+      return { stale: true, id: entry.id, sections, hash };
     }
 
     // Increment hit count asynchronously (don't wait)
@@ -161,7 +156,7 @@ async function getFromDatabase(question) {
     ).catch(() => {});
 
     process.stdout.write(`DB HIT: ${hash.slice(0, 50)} (${entry.hit_count} hits, ${Math.round(ageHours)}h old)\n`);
-    return { result: entry.result, sections, fromDb: true };
+    return { result: entry.result, sections, fromDb: true, hash };
   } catch (e) {
     process.stdout.write("DB LOOKUP ERROR: " + e.message + "\n");
     return null;
@@ -176,23 +171,29 @@ async function storeInDatabase(question, result, sections, existingId = null) {
     const now = new Date().toISOString();
 
     if (existingId) {
-      // Update stale entry
+      // Update by ID (stale refresh)
       await supaFetch(`query_database?id=eq.${existingId}`, "PATCH", {
-        result,
-        sections,
-        last_searched: now,
+        result, sections, last_searched: now,
       });
-      process.stdout.write(`DB UPDATED: ${hash.slice(0, 50)}\n`);
+      process.stdout.write(`DB UPDATED by id: ${hash.slice(0, 50)}\n`);
     } else {
-      // Insert new entry
-      await supaFetch("query_database", "POST", {
-        query_hash: hash,
-        question,
-        result,
-        sections,
-        last_searched: now,
-      });
-      process.stdout.write(`DB STORED: ${hash.slice(0, 50)}\n`);
+      // Upsert by hash — update if exists, insert if not
+      // First try to update existing entry with this hash
+      const existing = await supaFetch(
+        `query_database?query_hash=eq.${encodeURIComponent(hash)}&limit=1&select=id,hit_count`
+      );
+      if (Array.isArray(existing) && existing.length > 0) {
+        await supaFetch(`query_database?id=eq.${existing[0].id}`, "PATCH", {
+          result, sections, last_searched: now,
+          hit_count: (existing[0].hit_count || 1) + 1,
+        });
+        process.stdout.write(`DB UPSERTED (update): ${hash.slice(0, 50)}\n`);
+      } else {
+        await supaFetch("query_database", "POST", {
+          query_hash: hash, question, result, sections, last_searched: now,
+        });
+        process.stdout.write(`DB UPSERTED (insert): ${hash.slice(0, 50)}\n`);
+      }
     }
   } catch (e) {
     process.stdout.write("DB STORE ERROR: " + e.message + "\n");
@@ -613,6 +614,8 @@ Toujours en français, concis et précis.` },
     // ── Step 1: Always run local DB first (0 credits, always fresh) ─
     // lastMessage is already updated with extracted topic if resource button was clicked
     const effectiveQuery = lastMessage;
+    process.stdout.write(`EFFECTIVE QUERY: "${effectiveQuery}"\n`);
+    process.stdout.write(`HASH: "${normalizeQuery(effectiveQuery)}"\n`);
     const earlyLocal = await getLocalResources(effectiveQuery);
 
     // ── Step 2: Check query cache (use extracted topic as key) ────
@@ -624,7 +627,7 @@ Toujours en français, concis et précis.` },
         : dbResult.result;
       return res.json({ reply, source: "database" });
     }
-    const staleId = dbResult?.stale ? dbResult.id : null;
+    const staleId = (dbResult?.stale && dbResult?.hash === normalizeQuery(effectiveQuery)) ? dbResult.id : null;
 
     // ── Step 3: Intent detection + query generation ───────────────
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
