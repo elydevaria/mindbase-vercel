@@ -507,9 +507,10 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ─── AUTO-NEW CHAT RESET LOGIC ──────────────────────────────────
-    // Checks if the previous user interaction was an idle closing gesture.
-    // If it was, we isolate this new request as a completely blank slate.
+    // ─── STEP 1: AUTO-RESET THREAD HISTORY WINDOW ──────────────────────────────────
+    // Evaluates if the thread is recovering from a previous conversational closure.
+    // If true, we purge historical context bloat but preserve the incoming template
+    // query intact so that normalizeQuery maps to your database hash perfectly on Try 1.
     if (messages.length >= 3) {
       const userMessages = messages.filter(m => m.role === "user");
       if (userMessages.length >= 2) {
@@ -517,20 +518,19 @@ export default async function handler(req, res) {
         const wasPreviousMessageIdle = /^(merci|thank you|thanks|ok|super|top|parfait|parfait merci|merci beaucoup)\b\.?$/i.test(previousUserMessage);
         
         if (wasPreviousMessageIdle) {
-          process.stdout.write("🔄 AUTO-RESET: Converted post-pleasantry follow-up into a clean new conversation flow.\n");
+          process.stdout.write("🔄 AUTO-RESET: Preserving identical template string while flushing conversational history array.\n");
           messages = [
             { role: "user", content: lastMessage }
           ];
         }
       }
     }
-    // ────────────────────────────────────────────────────────────────
 
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
     let route = "search";
 
-    // ── Early extraction if explicit button clicked ──
-    if (forceSearch) {
+    // ── Pre-Extraction Routing Hooks ──
+    if (forceSearch && !req._extractedTopic) {
       const topicRes = await fetch(MISTRAL_API, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
@@ -552,8 +552,7 @@ export default async function handler(req, res) {
         messages[messages.length - 1] = { role: "user", content: extractedTopic };
         req._extractedTopic = extractedTopic;
       }
-    } else {
-      // ── Context-Aware 3-Way Router ──
+    } else if (!req._extractedTopic) {
       const routeRes = await fetch(MISTRAL_API, {
         method: "POST",
         headers: {
@@ -593,9 +592,9 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
 
     process.stdout.write(`ROUTE DETERMINED: ${route}\n`);
 
-    // ── Handle Non-Search Routes (explain or idle) ─────────────────────
+    // ── Handle Non-Search Conversational Loops ─────────────────────
     if (route === "explain" || route === "idle") {
-      process.stdout.write(`NON-SEARCH ROUTE (${route}) — skipping web/db calls\n`);
+      process.stdout.write(`NON-SEARCH ROUTE (${route}) — skipping web execution engines\n`);
       
       const systemContext = route === "idle"
         ? "Tu es MindBase. L'utilisateur te remercie ou valide tes informations. Réponds de manière brève (1-2 phrases maximum), chaleureuse et professionnelle en restant simplement à sa disposition."
@@ -628,9 +627,10 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       return res.json({ reply: finalReply, conversational: true, extractedTopic: req._extractedTopic || null });
     }
 
+    // ─── STEP 2: STABLE CACHE EVALUATION LAYER ──────────────────────────────────
+    // Checks for a pre-compiled dataset hash matrix directly against effectiveQuery.
+    // Identical template string arrays hit the database on Try 1 without losing tokens.
     const effectiveQuery = req._extractedTopic || lastMessage;
-
-    // ── Cache Layer Lookups ──
     const earlyLocal = await getLocalResources(effectiveQuery);
     const dbResult = await getFromDatabase(effectiveQuery);
     
@@ -643,7 +643,7 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Live Pipelines Generation Intent ──
+    // ── Live Engines Intent Synthesis ──
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(effectiveQuery);
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
@@ -652,10 +652,8 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
 
     const localResults = earlyLocal;
 
-    // ── Optimized Parallel Searches with Abort Controllers ──
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
+    // ── Live Scraping Pipeline Architecture ──
+    const timeoutId = setTimeout(() => {}, 4000);
     const fetchWithTimeout = (promise) => 
       Promise.race([
         promise,
@@ -684,13 +682,13 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
           .join("\n---\n");
       })) : Promise.resolve(""),
       has("pubmed") ? fetchWithTimeout(pubmedSearch(q.pubmed_cited, q.pubmed_recent)) : Promise.resolve(""),
-      has("books") ? fetchWithTimeout(braveSearch(`${q.books} site:amazon.fr OR site:fnac.com`, baseCount)) : Promise.resolve(""),
+      has("books") ? fetchWithTimeout(braveSearch(`${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`, baseCount)) : Promise.resolve(""),
       has("videos") ? fetchWithTimeout(braveVideoSearch(q.videos, baseCount)) : Promise.resolve(""),
       has("reddit") ? fetchWithTimeout(redditSearch(q.reddit_fr, q.reddit_en)) : Promise.resolve(""),
-      has("instagram") ? fetchWithTimeout(braveSearch(`site:instagram.com ${q.instagram}`, baseCount)) : Promise.resolve(""),
-      has("facebook") ? fetchWithTimeout(braveSearch(`site:facebook.com ${q.facebook} groupe`, baseCount)) : Promise.resolve(""),
+      has("instagram") ? fetchWithTimeout(braveSearch('site:instagram.com ' + q.instagram, baseCount)) : Promise.resolve(""),
+      has("facebook") ? fetchWithTimeout(braveSearch('site:facebook.com ' + q.facebook + ' groupe', baseCount)) : Promise.resolve(""),
       has("linkedin") ? fetchWithTimeout(braveSearch(`${q.linkedin} (site:linkedin.com/in OR "profil linkedin")`, baseCount)) : Promise.resolve(""),
-      has("forums") ? fetchWithTimeout(braveSearch(`${q.forums} forum OR discussion france -site:reddit.com`, baseCount)) : Promise.resolve(""),
+      has("forums") ? fetchWithTimeout(braveSearch(`${q.forums} forum OR discussion OR communauté france -site:reddit.com -site:facebook.com`, baseCount)) : Promise.resolve(""),
     ]);
 
     clearTimeout(timeoutId);
@@ -732,9 +730,9 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
         model: "mistral-small-latest",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          ...augmentedMessages.slice(-4), // Clean sliced context window prevents formatting crash out
+          ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 4000,
+        max_tokens: 6000,
         temperature: 0.2,
       }),
     });
