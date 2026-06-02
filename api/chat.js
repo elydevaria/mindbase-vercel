@@ -545,6 +545,32 @@ export default async function handler(req, res) {
     // Force search if user explicitly asks for resources
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
     const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search");
+
+    // If resource search triggered from conversational context,
+    // extract clean topic from conversation history and use as effective query
+    if (forceSearch && messages.length > 1) {
+      const topicRes = await fetch(MISTRAL_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          max_tokens: 50,
+          temperature: 0,
+          messages: [
+            { role: "system", content: "Tu es un assistant clinique. Lis la conversation et identifie le sujet clinique PRÉCIS en 4-8 mots en français. Sois spécifique — pas juste 'dépression' mais 'épisode dépressif caractérisé chez l'adulte', pas juste 'TDAH' mais 'TDAH adulte diagnostic et prise en charge'. Réponds UNIQUEMENT avec le sujet, rien d'autre." },
+            ...messages.slice(-10),
+          ]
+        })
+      });
+      const topicData = await topicRes.json();
+      const extractedTopic = topicData.choices?.[0]?.message?.content?.trim().replace(/^["'«»]+|["'«»]+$/g, "");
+      if (extractedTopic) {
+        messages[messages.length - 1] = { role: "user", content: `Ressources complètes sur ${extractedTopic} — protocoles, livres, vidéos, réseaux sociaux, recherches` };
+        process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
+        // Store extracted topic to return with response
+        req._extractedTopic = extractedTopic;
+      }
+    }
     process.stdout.write(`ROUTE: ${route}\n`);
 
     if (route === "answer") {
@@ -719,6 +745,7 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
     if (data.error) return res.status(500).json({ error: data.error.message });
 
     const reply = data.choices?.[0]?.message?.content || "Aucun résultat.";
+    const extractedTopic = req._extractedTopic || null;
 
     // ── Step 3: Store result in database ────────────────────────
     try {
@@ -727,7 +754,7 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
       process.stdout.write("STORE FAILED: " + e.message + "\n");
     }
 
-    res.json({ reply });
+    res.json({ reply, extractedTopic });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
