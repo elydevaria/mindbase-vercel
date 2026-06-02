@@ -519,7 +519,7 @@ export default async function handler(req, res) {
   const { messages } = req.body;
   if (!messages?.length) return res.status(400).json({ error: "No messages" });
 
-  const lastMessage = messages[messages.length - 1].content;
+  let lastMessage = messages[messages.length - 1].content;
 
   try {
     // ── Step 0: Verify Supabase connection ───────────────────────
@@ -572,8 +572,8 @@ export default async function handler(req, res) {
       process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
 
       if (extractedTopic) {
-        // Replace the last message (generic request) with the precise topic
-        // This is what gets passed to intent detection + cached
+        // Update lastMessage so intent detection + queries use the precise topic
+        lastMessage = extractedTopic;
         messages[messages.length - 1] = { role: "user", content: extractedTopic };
         req._extractedTopic = extractedTopic;
       }
@@ -611,8 +611,8 @@ Toujours en français, concis et précis.` },
     }
 
     // ── Step 1: Always run local DB first (0 credits, always fresh) ─
-    // Use extracted topic if available (from resource button click)
-    const effectiveQuery = req._extractedTopic || lastMessage;
+    // lastMessage is already updated with extracted topic if resource button was clicked
+    const effectiveQuery = lastMessage;
     const earlyLocal = await getLocalResources(effectiveQuery);
 
     // ── Step 2: Check query cache (use extracted topic as key) ────
