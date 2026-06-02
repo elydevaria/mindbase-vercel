@@ -141,16 +141,11 @@ async function getFromDatabase(question) {
 
     const entry = data[0];
 
-    // Check freshness — stable content (protocols, books) valid 7 days
-    // Dynamic content (forums, reddit) valid 1 day
+    // Cache valid for 90 days
     const ageHours = (Date.now() - new Date(entry.last_searched).getTime()) / 3600000;
     const sections = entry.sections || [];
-    const hasDynamicSections = sections.some(s => ["reddit","forums","instagram"].includes(s));
-    const maxAge = hasDynamicSections ? 24 : 168; // 1 day or 7 days
-
-    if (ageHours > maxAge) {
-      // Entry is stale — will refresh but keep the id for update
-      return { stale: true, id: entry.id, sections };
+    if (ageHours > 2160) { // 90 days
+      return { stale: true, id: entry.id, sections, hash };
     }
 
     // Increment hit count asynchronously (don't wait)
@@ -161,7 +156,7 @@ async function getFromDatabase(question) {
     ).catch(() => {});
 
     process.stdout.write(`DB HIT: ${hash.slice(0, 50)} (${entry.hit_count} hits, ${Math.round(ageHours)}h old)\n`);
-    return { result: entry.result, sections, fromDb: true };
+    return { result: entry.result, sections, fromDb: true, hash };
   } catch (e) {
     process.stdout.write("DB LOOKUP ERROR: " + e.message + "\n");
     return null;
@@ -176,23 +171,29 @@ async function storeInDatabase(question, result, sections, existingId = null) {
     const now = new Date().toISOString();
 
     if (existingId) {
-      // Update stale entry
+      // Update by ID (stale refresh)
       await supaFetch(`query_database?id=eq.${existingId}`, "PATCH", {
-        result,
-        sections,
-        last_searched: now,
+        result, sections, last_searched: now,
       });
-      process.stdout.write(`DB UPDATED: ${hash.slice(0, 50)}\n`);
+      process.stdout.write(`DB UPDATED by id: ${hash.slice(0, 50)}\n`);
     } else {
-      // Insert new entry
-      await supaFetch("query_database", "POST", {
-        query_hash: hash,
-        question,
-        result,
-        sections,
-        last_searched: now,
-      });
-      process.stdout.write(`DB STORED: ${hash.slice(0, 50)}\n`);
+      // Upsert by hash — update if exists, insert if not
+      // First try to update existing entry with this hash
+      const existing = await supaFetch(
+        `query_database?query_hash=eq.${encodeURIComponent(hash)}&limit=1&select=id,hit_count`
+      );
+      if (Array.isArray(existing) && existing.length > 0) {
+        await supaFetch(`query_database?id=eq.${existing[0].id}`, "PATCH", {
+          result, sections, last_searched: now,
+          hit_count: (existing[0].hit_count || 1) + 1,
+        });
+        process.stdout.write(`DB UPSERTED (update): ${hash.slice(0, 50)}\n`);
+      } else {
+        await supaFetch("query_database", "POST", {
+          query_hash: hash, question, result, sections, last_searched: now,
+        });
+        process.stdout.write(`DB UPSERTED (insert): ${hash.slice(0, 50)}\n`);
+      }
     }
   } catch (e) {
     process.stdout.write("DB STORE ERROR: " + e.message + "\n");
@@ -399,9 +400,9 @@ Réponds UNIQUEMENT avec ce JSON exact (pas de texte avant ni après):
   "facebook": "termes groupes Facebook francophones",
   "linkedin": "terme court pour profils LinkedIn praticiens",
   "forums": "termes forums médicaux professionnels français",
-  "recommendations": "requête bilingue HAS ANSM NICE Cochrane APA",
-  "pubmed_cited": "requête PubMed MeSH pour études citées",
-  "pubmed_recent": "requête PubMed études récentes 2022-2025"
+  "recommendations": "requête précise incluant le nom exact du trouble + HAS ANSM NICE — ex: 'dépression épisode dépressif caractérisé recommandations HAS' ou 'TDAH adulte prise en charge ANSM'",
+  "pubmed_cited": "requête PubMed EN ANGLAIS très précise avec le terme MeSH exact du trouble — ex: 'major depressive disorder[MeSH] adults treatment systematic review' ou 'attention deficit disorder[MeSH] adults meta-analysis' — JAMAIS des termes généraux comme 'mental health' ou 'psychiatry'",
+  "pubmed_recent": "requête PubMed EN ANGLAIS précise avec le terme exact du trouble pour études 2022-2025 — ex: 'major depressive episode diagnosis adults 2023' ou 'ADHD adults treatment 2024' — JAMAIS 'mental health' ou termes trop généraux"
 }
 
 Règles pour "sections" :
@@ -412,7 +413,11 @@ Règles pour "sections" :
 - Question sur communautés/forums → ["reddit","forums","facebook"]
 - Question sur recherches/études → ["pubmed"]
 - Question générale ou "ressources complètes" → toutes les sections
-- Analyse intelligemment selon le contexte clinique`
+- Analyse intelligemment selon le contexte clinique
+
+RÈGLE ABSOLUE pour les requêtes : utilise TOUJOURS le nom exact du trouble dans chaque requête.
+Jamais de termes généraux comme "santé mentale" ou "psychiatrie" sauf si la question porte explicitement sur ces sujets.
+Ex: pour "épisode dépressif adulte" → toutes les requêtes doivent contenir "dépression" ou "épisode dépressif" ou "major depressive".`
         }]
       }),
     });
@@ -503,7 +508,10 @@ Pour Articles les plus cités : affiche MINIMUM 5 articles tagués [Très cité]
 Pour Instagram : affiche EXACTEMENT le titre tel qu'il apparaît dans les résultats ET le handle (@username). Ne raccourcis jamais le nom du compte.
 Pour LinkedIn : affiche le nom complet, titre et institution de la personne.
 Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français.
-Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max.
+Par ressource, utilise EXACTEMENT ce format (ne pas écrire les mots "titre en gras") :
+**[Titre de la ressource]**
+[Une phrase de description.]
+[URL exacte]
 Si seulement 1-2 sections ont des résultats, affiche-les en détail complet sans limite de lignes.
 Outil d'aide décisionnelle uniquement.`;
 
@@ -512,18 +520,106 @@ export default async function handler(req, res) {
   const { messages } = req.body;
   if (!messages?.length) return res.status(400).json({ error: "No messages" });
 
-  const lastMessage = messages[messages.length - 1].content;
+  let lastMessage = messages[messages.length - 1].content;
 
   try {
     // ── Step 0: Verify Supabase connection ───────────────────────
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 1: Always run local DB first (0 credits, always fresh) ─
-    const earlyLocal = await getLocalResources(lastMessage);
+    // ── Step 0: Mistral decides: search resources OR answer directly ─
+    const routeRes = await fetch(MISTRAL_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "mistral-small-latest",
+        max_tokens: 5,
+        temperature: 0,
+        messages: [
+          { role: "system", content: `Tu es un routeur. Lis la conversation et réponds UNIQUEMENT par "search" ou "answer".
+"search" = l'utilisateur cherche des ressources/protocoles/articles/livres/communautés sur un sujet clinique.
+"answer" = l'utilisateur veut une reformulation, synthèse, explication, définition, comparaison, ou envoie un texte à traiter.` },
+          ...messages.slice(-6),
+        ]
+      }),
+    });
+    const routeData = await routeRes.json();
+    // Force search if user explicitly asks for resources
+    const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
+    const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search");
 
-    // ── Step 2: Check query cache ──────────────────────────────────
-    const dbResult = await getFromDatabase(lastMessage);
+    // ── Resource button clicked: extract topic → use as search query ──
+    // This replaces the generic "cherche moi les ressources..." with the
+    // precise clinical topic. Only THIS topic gets cached — not the generic message.
+    if (forceSearch) {
+      const topicRes = await fetch(MISTRAL_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          max_tokens: 20,
+          temperature: 0,
+          messages: [
+            { role: "system", content: "Extrais le sujet clinique PRÉCIS de la conversation en 3-5 mots. Règles strictes: (1) Ne généralise JAMAIS — 'dépression' pas 'santé mentale', 'TDAH adulte' pas 'troubles neurodéveloppementaux', 'épisode dépressif adulte' pas 'psychiatrie'. (2) Garde le terme clinique exact tel qu'utilisé dans la conversation. (3) UNIQUEMENT ces mots, rien d'autre." },
+            ...messages.slice(-8).filter(m => !(/cherche.moi|ressources cliniques/i.test(m.content || ""))),
+          ]
+        })
+      });
+      const topicData = await topicRes.json();
+      const extractedTopic = (topicData.choices?.[0]?.message?.content || "").trim().replace(/^["'«»\s]+|["'«»\s]+$/g, "");
+      process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
+
+      if (extractedTopic) {
+        // Update lastMessage so intent detection + queries use the precise topic
+        lastMessage = extractedTopic;
+        messages[messages.length - 1] = { role: "user", content: extractedTopic };
+        req._extractedTopic = extractedTopic;
+      }
+      // Fall through to normal intent-based search with the extracted topic
+    }
+    process.stdout.write(`ROUTE: ${route}\n`);
+
+    if (route === "answer") {
+      process.stdout.write("CONVERSATIONAL — skipping searches\n");
+      const convResponse = await fetch(MISTRAL_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: "mistral-small-latest",
+          messages: [
+            { role: "system", content: `Tu es MindBase, assistant clinique expert en santé mentale pour praticiens français.
+Réponds directement à la demande en utilisant le contexte de la conversation.
+- Texte à synthétiser/reformuler → fais-le directement
+- Question conceptuelle → réponds avec tes connaissances cliniques
+- Pas assez de contexte → demande poliment ce qu'il faut traiter
+Toujours en français, concis et précis.` },
+            ...messages.slice(-10),
+          ],
+          max_tokens: 2000,
+          temperature: 0.3,
+        }),
+      });
+      const convData = await convResponse.json();
+      const convReply = convData.choices?.[0]?.message?.content || "Je n'ai pas pu générer une réponse.";
+      const withOffer = convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*";
+      return res.json({ reply: withOffer, conversational: true });
+    }
+
+    // ── Step 1: Always run local DB first (0 credits, always fresh) ─
+    // lastMessage is already updated with extracted topic if resource button was clicked
+    const effectiveQuery = lastMessage;
+    process.stdout.write(`EFFECTIVE QUERY: "${effectiveQuery}"\n`);
+    process.stdout.write(`HASH: "${normalizeQuery(effectiveQuery)}"\n`);
+    const earlyLocal = await getLocalResources(effectiveQuery);
+
+    // ── Step 2: Check query cache (use extracted topic as key) ────
+    const dbResult = await getFromDatabase(effectiveQuery);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
       const reply = earlyLocal
@@ -531,13 +627,16 @@ export default async function handler(req, res) {
         : dbResult.result;
       return res.json({ reply, source: "database" });
     }
-    const staleId = dbResult?.stale ? dbResult.id : null;
+    const staleId = (dbResult?.stale && dbResult?.hash === normalizeQuery(effectiveQuery)) ? dbResult.id : null;
 
     // ── Step 3: Intent detection + query generation ───────────────
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
-    const isGeneral = intentSections.length === 0;
+    // forceSearch (resource button or chip) = always all sections
+    // otherwise let intent detection decide
+    const isGeneral = intentSections.length === 0 || !!req._extractedTopic || forceSearch;
     const has = (s) => isGeneral || intentSections.includes(s);
+    process.stdout.write(`IS_GENERAL: ${isGeneral} forceSearch: ${forceSearch} sections: ${JSON.stringify(intentSections)}\n`);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 10 : 7;
     const protocolCount = has('protocols') && !isGeneral ? 10 : baseCount;
 
@@ -653,7 +752,7 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
           { role: "system", content: SYSTEM_PROMPT },
           ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 5000,
+        max_tokens: 6000,
         temperature: 0.2,
       }),
     });
@@ -662,15 +761,16 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
     if (data.error) return res.status(500).json({ error: data.error.message });
 
     const reply = data.choices?.[0]?.message?.content || "Aucun résultat.";
+    const extractedTopic = req._extractedTopic || null;
 
     // ── Step 3: Store result in database ────────────────────────
     try {
-      await storeInDatabase(lastMessage, reply, intentSections, staleId);
+      await storeInDatabase(effectiveQuery, reply, intentSections, staleId);
     } catch (e) {
       process.stdout.write("STORE FAILED: " + e.message + "\n");
     }
 
-    res.json({ reply });
+    res.json({ reply, extractedTopic });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
