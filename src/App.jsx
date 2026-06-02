@@ -469,10 +469,11 @@ export default function MindBase() {
     }
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, displayText) {
     if (!text.trim() || loading) return;
     const newHistory = [...history, { role:"user", content:text }];
-    setMessages(m=>[...m, { type:"user", text }]);
+    const msgId = Date.now();
+    setMessages(m=>[...m, { type:"user", text: displayText || text, id: msgId }]);
     setInput("");
     setLoading(true);
     try {
@@ -483,6 +484,14 @@ export default function MindBase() {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      // If server extracted a topic, update the user message display
+      if (data.extractedTopic) {
+        setMessages(m => m.map(msg =>
+          msg.id === msgId
+            ? { ...msg, text: `🔍 Recherche de ressources — "${data.extractedTopic}"` }
+            : msg
+        ));
+      }
       setHistory([...newHistory, { role:"assistant", content:data.reply }].slice(-16));
       setMessages(m=>[...m, { type:"agent", text:data.reply, conversational:data.conversational }]);
     } catch(e) {
@@ -601,11 +610,8 @@ export default function MindBase() {
                   <div style={{ display:"flex", justifyContent:"flex-end", gap:6, marginTop:5, flexWrap:"wrap" }}>
                     {msg.conversational && (
                       <button onClick={()=>{
-                        // Use the user's original question as topic, not the assistant's response
-                        const userMsgs = messages.filter(m => m.type === "user");
-                        const lastUserMsg = userMsgs[userMsgs.length - 1]?.text || "";
-                        const topic = lastUserMsg.slice(0, 80).replace(/[#*\n]/g," ").trim();
-                        sendMessage(`Ressources cliniques complètes sur : ${topic}`);
+                        // Show placeholder — server will extract real topic
+                        sendMessage("Cherche-moi les ressources cliniques complètes sur le sujet de notre conversation", "🔍 Recherche de ressources en cours...");
                       }}
                         style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", border:"1px solid #a8cdb5", borderRadius:20, background:"#eaf3ee", cursor:"pointer", fontSize:11, color:"#2d5a3d", fontFamily:"system-ui,sans-serif", fontWeight:500 }}>
                         🔍 Chercher les ressources
