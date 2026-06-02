@@ -1,4 +1,4 @@
-# 🧠 MindBase — Agent Clinique en Santé Mentale
+# MindBase — Agent Clinique en Santé Mentale
 
 Un outil de recherche intelligent pour les praticiens français en santé mentale — psychiatres, psychologues, psychothérapeutes.
 
@@ -75,7 +75,7 @@ Les résultats sont stockés dans Supabase après chaque recherche. Les requête
 
 ## Sources consultées
 
-HAS · ANSM · Inserm · OMS · PubMed · NICE · Cochrane · APA · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac · LinkedIn
+HAS · Ameli · ANSM · Inserm · OMS · PubMed · NICE · Cochrane · APA · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac · LinkedIn
 
 ---
 
