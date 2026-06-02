@@ -400,8 +400,8 @@ Réponds UNIQUEMENT avec ce JSON exact (pas de texte avant ni après):
   "linkedin": "terme court pour profils LinkedIn praticiens",
   "forums": "termes forums médicaux professionnels français",
   "recommendations": "requête bilingue HAS ANSM NICE Cochrane APA",
-  "pubmed_cited": "requête PubMed MeSH pour études citées",
-  "pubmed_recent": "requête PubMed études récentes 2022-2025"
+  "pubmed_cited": "requête PubMed EN ANGLAIS avec termes MeSH précis pour méta-analyses et systematic reviews les plus citées — ex: major depressive disorder[MeSH] meta-analysis OR ADHD[MeSH] systematic review",
+  "pubmed_recent": "requête PubMed EN ANGLAIS pour essais randomisés récents 2022-2025 — ex: major depressive episode treatment randomized controlled trial 2023"
 }
 
 Règles pour "sections" :
@@ -503,7 +503,10 @@ Pour Articles les plus cités : affiche MINIMUM 5 articles tagués [Très cité]
 Pour Instagram : affiche EXACTEMENT le titre tel qu'il apparaît dans les résultats ET le handle (@username). Ne raccourcis jamais le nom du compte.
 Pour LinkedIn : affiche le nom complet, titre et institution de la personne.
 Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels français.
-Par ressource : **titre en gras**, 1 phrase description, URL sur ligne suivante. 3 lignes max.
+Par ressource, utilise EXACTEMENT ce format (ne pas écrire les mots "titre en gras") :
+**[Titre de la ressource]**
+[Une phrase de description.]
+[URL exacte]
 Si seulement 1-2 sections ont des résultats, affiche-les en détail complet sans limite de lignes.
 Outil d'aide décisionnelle uniquement.`;
 
@@ -707,7 +710,7 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
           { role: "system", content: SYSTEM_PROMPT },
           ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 5000,
+        max_tokens: 6000,
         temperature: 0.2,
       }),
     });
