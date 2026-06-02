@@ -2,7 +2,7 @@
 
 Un outil de recherche intelligent pour les praticiens français en santé mentale — psychiatres, psychologues, psychothérapeutes.
 
-**👉 [mindbase-seven.vercel.app](https://mindbase-agent.vercel.app)**
+**👉 [mindbase-agent.vercel.app](https://mindbase-agent.vercel.app)**
 
 ---
 
