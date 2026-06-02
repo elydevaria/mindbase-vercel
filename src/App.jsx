@@ -484,7 +484,7 @@ export default function MindBase() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setHistory([...newHistory, { role:"assistant", content:data.reply }].slice(-16));
-      setMessages(m=>[...m, { type:"agent", text:data.reply }]);
+      setMessages(m=>[...m, { type:"agent", text:data.reply, conversational:data.conversational }]);
     } catch(e) {
       setMessages(m=>[...m, { type:"error", text:e.message }]);
     }
@@ -598,7 +598,13 @@ export default function MindBase() {
                   {msg.type==="user"?<span style={{ fontSize:13 }}>{msg.text}</span>:msg.type==="error"?<span style={{ fontSize:13 }}>Erreur : {msg.text}</span>:parseContent(msg.text)}
                 </div>
                 {msg.type==="agent"&&(
-                  <div style={{ display:"flex", justifyContent:"flex-end", gap:6, marginTop:5 }}>
+                  <div style={{ display:"flex", justifyContent:"flex-end", gap:6, marginTop:5, flexWrap:"wrap" }}>
+                    {msg.conversational && (
+                      <button onClick={()=>sendMessage("Oui, cherche-moi les ressources cliniques sur ce sujet")}
+                        style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", border:"1px solid #a8cdb5", borderRadius:20, background:"#eaf3ee", cursor:"pointer", fontSize:11, color:"#2d5a3d", fontFamily:"system-ui,sans-serif", fontWeight:500 }}>
+                        🔍 Chercher les ressources
+                      </button>
+                    )}
                     <button onClick={()=>downloadAsPdf(msg.text, msg.text.split("\n")[0].replace(/[#*📚▶️📸👥💬🔗🐦🔬📄📋]/g,"").trim().slice(0,40))} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", border:"1px solid #e2ddd5", borderRadius:20, background:"#fff", cursor:"pointer", fontSize:11, color:"#6b6560", fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>{e.currentTarget.style.background="#f5f3ee";}} onMouseLeave={e=>{e.currentTarget.style.background="#fff";}}>
                       ⬇️ PDF
                     </button>
