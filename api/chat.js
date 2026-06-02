@@ -519,14 +519,31 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ── Step 0: Detect if this is a conversational request ──────────
-    // If user asks to reformulate, summarise, explain, compare etc.
-    // → answer directly with Mistral, skip all searches entirely
-    const CONVERSATIONAL = /reformul|reforumle|résumé|resume|synthese|synthèse|explique|expliquer|compare|différence|difference|clarifi|traduis|traduit|simplifie|réécris|reecris|reformuler|peux.tu me|qu.est.ce que|c.est quoi|comment fonctionne|que signifie|définition|definition/i;
-    
-    if (CONVERSATIONAL.test(lastMessage)) {
-      // Conversational — answer using Mistral with conversation history only
-      process.stdout.write("CONVERSATIONAL request — skipping searches\n");
+    // ── Step 0: Mistral decides: search resources OR answer directly ─
+    const routeRes = await fetch(MISTRAL_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "mistral-small-latest",
+        max_tokens: 5,
+        temperature: 0,
+        messages: [
+          { role: "system", content: `Tu es un routeur. Lis la conversation et réponds UNIQUEMENT par "search" ou "answer".
+"search" = l'utilisateur cherche des ressources/protocoles/articles/livres/communautés sur un sujet clinique.
+"answer" = l'utilisateur veut une reformulation, synthèse, explication, définition, comparaison, ou envoie un texte à traiter.` },
+          ...messages.slice(-6),
+        ]
+      }),
+    });
+    const routeData = await routeRes.json();
+    const route = (routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search";
+    process.stdout.write(`ROUTE: ${route}\n`);
+
+    if (route === "answer") {
+      process.stdout.write("CONVERSATIONAL — skipping searches\n");
       const convResponse = await fetch(MISTRAL_API, {
         method: "POST",
         headers: {
@@ -537,10 +554,10 @@ export default async function handler(req, res) {
           model: "mistral-small-latest",
           messages: [
             { role: "system", content: `Tu es MindBase, assistant clinique expert en santé mentale pour praticiens français.
-Réponds directement à la demande :
-- Reformulation/synthèse avec contexte → utilise les messages précédents
-- Reformulation/synthèse sans contexte → demande poliment sur quel sujet ou texte
-- Question conceptuelle (définition, différence, explication) → réponds avec tes connaissances cliniques
+Réponds directement à la demande en utilisant le contexte de la conversation.
+- Texte à synthétiser/reformuler → fais-le directement
+- Question conceptuelle → réponds avec tes connaissances cliniques
+- Pas assez de contexte → demande poliment ce qu'il faut traiter
 Toujours en français, concis et précis.` },
             ...messages.slice(-10),
           ],
@@ -550,8 +567,7 @@ Toujours en français, concis et précis.` },
       });
       const convData = await convResponse.json();
       const convReply = convData.choices?.[0]?.message?.content || "Je n'ai pas pu générer une réponse.";
-      // Append resource offer at the end
-      const withOffer = convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet (protocoles, articles, livres, communautés) ?*";
+      const withOffer = convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*";
       return res.json({ reply: withOffer, conversational: true });
     }
 
