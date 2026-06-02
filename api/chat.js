@@ -539,7 +539,9 @@ export default async function handler(req, res) {
       }),
     });
     const routeData = await routeRes.json();
-    const route = (routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search";
+    // Force search if user explicitly asks for resources
+    const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
+    const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search");
     process.stdout.write(`ROUTE: ${route}\n`);
 
     if (route === "answer") {
