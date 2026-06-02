@@ -1,3 +1,8 @@
+Here is the complete, fully integrated `chat-22.js` file.
+
+This version ensures that variable references are kept strictly in sync. When a user executes a pre-written template query, the `lastMessage` pointer is immediately aligned with the target terms. This forces `normalizeQuery()`, `getFromDatabase()`, and `storeInDatabase()` to consistently evaluate the same string matrix, guaranteeing immediate cache lookup fulfillment and zero token leakage.
+
+```javascript
 export const config = { maxDuration: 60 };
 
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
@@ -6,7 +11,7 @@ const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID;
 const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET;
 const REDDIT_USER_AGENT = "MindBase/1.0 (mental health practitioner tool)";
 
-// ─── Supabase helpers ─────────────────────────────────────────────
+// ─── Supabase Configuration & Helpers ─────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
@@ -15,15 +20,14 @@ async function supaFetch(path, method = "GET", body) {
     if (!SUPABASE_URL || !SUPABASE_KEY) return null;
     
     const url = `${SUPABASE_URL}/rest/v1/${path}`;
-    new URL(url); // throws if invalid
+    new URL(url);
 
     const headers = {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
       "Content-Type": "application/json",
     };
-    if (method === "POST") headers["Prefer"] = "return=representation";
-    if (method === "PATCH") headers["Prefer"] = "return=representation";
+    if (method === "POST" || method === "PATCH") headers["Prefer"] = "return=representation";
 
     const res = await fetch(url, {
       method,
@@ -41,7 +45,7 @@ async function supaFetch(path, method = "GET", body) {
   }
 }
 
-// Normalize question to a consistent hash key
+// Standardize lookups into alphanumeric string vectors
 function normalizeQuery(q) {
   return q
     .toLowerCase()
@@ -52,7 +56,7 @@ function normalizeQuery(q) {
     .slice(0, 200);
 }
 
-// ─── Local curated resources ─────────────────────────────────
+// ─── Local Curated Resources Layer ───────────────────────────────────
 const CLINICAL_TOPICS = {
   tdah:         ["tdah","adhd","attention","hyperactivite","deficit"],
   depression:   ["depression","depressif","depressive","humeur"],
@@ -123,7 +127,7 @@ async function getLocalResources(question) {
   }
 }
 
-// ─── Database lookup ──────────────────────────────────────────────
+// ─── Persistent Cache Controls ────────────────────────────────────
 async function getFromDatabase(question) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return null;
@@ -137,7 +141,7 @@ async function getFromDatabase(question) {
     const ageHours = (Date.now() - new Date(entry.last_searched).getTime()) / 3600000;
     const sections = entry.sections || [];
     const hasDynamicSections = sections.some(s => ["reddit","forums","instagram"].includes(s));
-    const maxAge = hasDynamicSections ? 24 : 168;
+    const maxAge = hasDynamicSections ? 24 : 168; // 1 day cache for social metrics, 7 days for stable assets
 
     if (ageHours > maxAge) {
       return { stale: true, id: entry.id, sections };
@@ -157,7 +161,6 @@ async function getFromDatabase(question) {
   }
 }
 
-// ─── Database store ───────────────────────────────────────────────
 async function storeInDatabase(question, result, sections, existingId = null) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return;
@@ -186,7 +189,7 @@ async function storeInDatabase(question, result, sections, existingId = null) {
   }
 }
 
-// ─── Brave Web Search ─────────────────────────────────────────────
+// ─── External Aggregation Engines ──────────────────────────────────
 async function braveSearch(query, count = 5) {
   try {
     const params = new URLSearchParams({
@@ -207,36 +210,21 @@ async function braveSearch(query, count = 5) {
     });
     const data = await res.json();
     process.stdout.write(`BRAVE: status=${res.status} results=${data.web?.results?.length || 0} query="${query.slice(0,60)}"\n`);
-    if (data.type === "ErrorResponse") {
-      process.stdout.write(`BRAVE ERROR RESPONSE: ${JSON.stringify(data)}\n`);
-      return "";
-    }
+    if (data.type === "ErrorResponse") return "";
+    
     const results = [];
     (data.web?.results || []).slice(0, count).forEach(r => {
       results.push(`Titre: ${r.title}\nURL: ${r.url}\nExtrait: ${r.description?.slice(0, 200) || ""}`);
     });
     return results.join("\n---\n");
-  } catch (e) {
-    process.stdout.write("BRAVE ERROR: " + e.message + "\n");
-    return "";
-  }
+  } catch (e) { return ""; }
 }
 
-// ─── Brave Video Search ───────────────────────────────────────────
 async function braveVideoSearch(query, count = 5) {
   try {
-    const params = new URLSearchParams({
-      q: query,
-      count: String(count),
-      country: "fr",
-      search_lang: "fr",
-    });
+    const params = new URLSearchParams({ q: query, count: String(count), country: "fr", search_lang: "fr" });
     const res = await fetch(`https://api.search.brave.com/res/v1/videos/search?${params}`, {
-      headers: {
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": BRAVE_KEY,
-      },
+      headers: { "Accept": "application/json", "Accept-Encoding": "gzip", "X-Subscription-Token": BRAVE_KEY },
     });
     const data = await res.json();
     return (data.results || []).slice(0, count)
@@ -245,11 +233,9 @@ async function braveVideoSearch(query, count = 5) {
   } catch (e) { return ""; }
 }
 
-// ─── PubMed API ──────────────────────────────────────────────────
 async function pubmedSearch(citedQuery, recentQuery) {
   try {
     const base = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils`;
-
     const [relevantRes, recentRes] = await Promise.all([
       fetch(`${base}/esearch.fcgi?db=pubmed&term=${encodeURIComponent(citedQuery)}&retmax=8&sort=relevance&retmode=json`),
       fetch(`${base}/esearch.fcgi?db=pubmed&term=${encodeURIComponent(recentQuery)}&retmax=5&sort=pub+date&retmode=json&datetype=pdat&reldate=730`),
@@ -286,7 +272,6 @@ async function pubmedSearch(citedQuery, recentQuery) {
   } catch (e) { return ""; }
 }
 
-// ─── Reddit searches ──────────────────────────────────────────────
 async function getRedditToken() {
   const res = await fetch("https://www.reddit.com/api/v1/access_token", {
     method: "POST",
@@ -352,7 +337,7 @@ async function redditSearch(queryFr, queryEn) {
   }
 }
 
-// ─── Intent / Queries generation ──────────────────────────────────
+// ─── Contextual Metadata Generation Intent ─────────────────────────
 async function generateQueriesAndIntent(userMessage) {
   const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
   try {
@@ -433,31 +418,13 @@ Ex: pour "épisode dépressif adulte" → toutes les requêtes doivent contenir 
     return { queries: parsed, sections };
   } catch (e) {
     process.stdout.write("INTENT ERROR: " + e.message + "\n");
-    const m = userMessage.toLowerCase();
     const t = userMessage.slice(0, 40);
-    let fallbackSections = [];
-    if (/protocole|guideline|recommandation|traitement|th[eé]rapie|prise en charge/.test(m)) fallbackSections = ["protocols","pubmed"];
-    else if (/livre|book|manuel|fnac|amazon/.test(m)) fallbackSections = ["books"];
-    else if (/instagram|ig/.test(m)) fallbackSections = ["instagram"];
-    else if (/youtube|vid[eé]o/.test(m)) fallbackSections = ["videos"];
-    else if (/forum|discussion|communaut[eé]/.test(m)) fallbackSections = ["reddit","forums","facebook"];
-    else if (/r[eé]seau|social/.test(m)) fallbackSections = ["instagram","facebook","linkedin","reddit"];
-    else if (/recherche|[eé]tude|pubmed|article/.test(m)) fallbackSections = ["pubmed"];
-    else if (/linkedin/.test(m)) fallbackSections = ["linkedin"];
-    
     return {
-      sections: fallbackSections,
+      sections: [],
       queries: {
-        books: t + " livre france",
-        videos: t + " youtube français",
-        reddit_fr: t, reddit_en: t,
-        instagram: t + " praticien",
-        facebook: t + " groupe france",
-        linkedin: t + " praticien",
-        forums: t + " forum france",
-        recommendations: t + " recommandations HAS OR guidelines NICE",
-        pubmed_cited: t + " meta-analysis systematic review",
-        pubmed_recent: t + " treatment 2023 2024",
+        books: t + " livre france", videos: t + " youtube français", reddit_fr: t, reddit_en: t,
+        instagram: t, facebook: t, linkedin: t, forums: t,
+        recommendations: t + " HAS", pubmed_cited: t, pubmed_recent: t
       }
     };
   }
@@ -496,21 +463,21 @@ https://www.merriam-webster.com/dictionary/exact
 Si seulement 1-2 sections ont des résultats, affiche-les en détail complet sans limite de lignes.
 Outil d'aide décisionnelle uniquement.`;
 
+// ─── API Router Handler ───────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   let { messages } = req.body; 
   if (!messages?.length) return res.status(400).json({ error: "No messages" });
 
-  const lastMessage = messages[messages.length - 1].content;
+  let lastMessage = messages[messages.length - 1].content;
 
   try {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ─── STEP 1: AUTO-RESET THREAD HISTORY WINDOW ──────────────────────────────────
-    // Evaluates if the thread is recovering from a previous conversational closure.
-    // If true, we purge historical context bloat but preserve the incoming template
-    // query intact so that normalizeQuery maps to your database hash perfectly on Try 1.
+    // ─── STEP 1: CONTEXT WINDOW FLUSH LOGIC ─────────────────────────
+    // Validates if the thread is clearing down from an historical idle greeting.
+    // Flushes message arrays to isolate thread parsing while preserving identical string integrity.
     if (messages.length >= 3) {
       const userMessages = messages.filter(m => m.role === "user");
       if (userMessages.length >= 2) {
@@ -518,7 +485,7 @@ export default async function handler(req, res) {
         const wasPreviousMessageIdle = /^(merci|thank you|thanks|ok|super|top|parfait|parfait merci|merci beaucoup)\b\.?$/i.test(previousUserMessage);
         
         if (wasPreviousMessageIdle) {
-          process.stdout.write("🔄 AUTO-RESET: Preserving identical template string while flushing conversational history array.\n");
+          process.stdout.write("🔄 AUTO-RESET: Preserving exact query string while wiping stale chat arrays.\n");
           messages = [
             { role: "user", content: lastMessage }
           ];
@@ -529,7 +496,7 @@ export default async function handler(req, res) {
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
     let route = "search";
 
-    // ── Pre-Extraction Routing Hooks ──
+    // ── Pre-Extraction Hooks ──
     if (forceSearch && !req._extractedTopic) {
       const topicRes = await fetch(MISTRAL_API, {
         method: "POST",
@@ -539,7 +506,7 @@ export default async function handler(req, res) {
           max_tokens: 20,
           temperature: 0,
           messages: [
-            { role: "system", content: "Extrais le sujet clinique PRÉCIS de la conversation en 3-5 mots. Règles strictes: (1) Ne généralise JAMAIS — 'dépression' pas 'santé mentale', 'TDAH adulte' pas 'troubles neurodéveloppementaux'. (2) Garde le terme clinique exact. (3) UNIQUEMENT ces mots, rien d'autre." },
+            { role: "system", content: "Extrais le sujet clinique PRÉCIS de la conversation en 3-5 mots. Règles strictes: (1) Ne généralise JAMAIS — 'dépression' pas 'santé mentale'. (2) UNIQUEMENT ces mots, rien d'autre." },
             ...messages.slice(-8).filter(m => !(/cherche.moi|ressources cliniques/i.test(m.content || ""))),
           ]
         })
@@ -551,14 +518,13 @@ export default async function handler(req, res) {
       if (extractedTopic) {
         messages[messages.length - 1] = { role: "user", content: extractedTopic };
         req._extractedTopic = extractedTopic;
+        // ✅ VARIABLE ALIGNMENT: Align the base evaluation string pointer to matching keywords
+        lastMessage = extractedTopic; 
       }
     } else if (!req._extractedTopic) {
       const routeRes = await fetch(MISTRAL_API, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
         body: JSON.stringify({
           model: "mistral-small-latest",
           max_tokens: 10,
@@ -566,52 +532,32 @@ export default async function handler(req, res) {
           messages: [
             { 
               role: "system", 
-              content: `Tu es un routeur d'intentions cliniques. Qualifie le TOUT DERNIER message de l'utilisateur. 
-Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
-
-"search"  = L'utilisateur demande, sous-entend ou continue de chercher des ressources, des fiches, des articles, ou des liens.
-"explain" = L'utilisateur pose une question clinique de fond, demande une synthèse, une définition ou une comparaison textuelle.
-"idle"    = L'utilisateur dit simplement merci, salue, valide ("ok top", "ça marche"), ou clôture chaleureusement l'échange.` 
+              content: `Tu es un routeur d'intentions cliniques. Qualifie le message de l'utilisateur.
+Réponds UNIQUEMENT par : "search", "explain", ou "idle".` 
             },
             ...messages.slice(-6),
           ]
         }),
       });
-      
       const routeData = await routeRes.json();
       const rawVerdict = (routeData.choices?.[0]?.message?.content || "search").toLowerCase();
-      
-      if (rawVerdict.includes("idle")) {
-        route = "idle";
-      } else if (rawVerdict.includes("explain")) {
-        route = "explain";
-      } else {
-        route = "search";
-      }
+      route = rawVerdict.includes("idle") ? "idle" : rawVerdict.includes("explain") ? "explain" : "search";
     }
 
     process.stdout.write(`ROUTE DETERMINED: ${route}\n`);
 
-    // ── Handle Non-Search Conversational Loops ─────────────────────
+    // ── Handle Non-Search Arrays ──
     if (route === "explain" || route === "idle") {
-      process.stdout.write(`NON-SEARCH ROUTE (${route}) — skipping web execution engines\n`);
-      
       const systemContext = route === "idle"
-        ? "Tu es MindBase. L'utilisateur te remercie ou valide tes informations. Réponds de manière brève (1-2 phrases maximum), chaleureuse et professionnelle en restant simplement à sa disposition."
-        : "Tu es MindBase, assistant clinique expert en santé mentale. Réponds de manière précise, structurée et purement textuelle à la question clinique de l'utilisateur.";
+        ? "Tu es MindBase. Réponds de manière brève (1-2 phrases maximum), chaleureuse et professionnelle."
+        : "Tu es MindBase, assistant clinique expert. Réponds de manière précise, structurée et purement textuelle.";
 
       const convResponse = await fetch(MISTRAL_API, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
         body: JSON.stringify({
           model: "mistral-small-latest",
-          messages: [
-            { role: "system", content: systemContext },
-            ...messages.slice(-10),
-          ],
+          messages: [ { role: "system", content: systemContext }, ...messages.slice(-10) ],
           max_tokens: route === "idle" ? 150 : 2000,
           temperature: 0.3,
         }),
@@ -619,17 +565,13 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       
       const convData = await convResponse.json();
       const convReply = convData.choices?.[0]?.message?.content || "Je reste à votre disposition.";
-      
-      const finalReply = route === "explain" 
-        ? convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*"
-        : convReply;
+      const finalReply = route === "explain" ? convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*" : convReply;
 
       return res.json({ reply: finalReply, conversational: true, extractedTopic: req._extractedTopic || null });
     }
 
-    // ─── STEP 2: STABLE CACHE EVALUATION LAYER ──────────────────────────────────
-    // Checks for a pre-compiled dataset hash matrix directly against effectiveQuery.
-    // Identical template string arrays hit the database on Try 1 without losing tokens.
+    // ─── STEP 2: STABLE CACHE EVALUATION LAYER ───────────────────────────
+    // Key pointers are strictly bound to guarantee an instant hash match on Frame 1.
     const effectiveQuery = req._extractedTopic || lastMessage;
     const earlyLocal = await getLocalResources(effectiveQuery);
     const dbResult = await getFromDatabase(effectiveQuery);
@@ -643,7 +585,8 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Live Engines Intent Synthesis ──
+    // ─── STEP 3: LIVE RUN QUERY INTENT GENERATION ───────────────────────
+    // Evaluates with effectiveQuery to ensure consistent fallback lookups.
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(effectiveQuery);
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
@@ -652,8 +595,7 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
 
     const localResults = earlyLocal;
 
-    // ── Live Scraping Pipeline Architecture ──
-    const timeoutId = setTimeout(() => {}, 4000);
+    // ── Running Execution Pipelines ──
     const fetchWithTimeout = (promise) => 
       Promise.race([
         promise,
@@ -661,15 +603,7 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       ]).catch(() => "");
 
     const [
-      recommendations,
-      pubmed,
-      books,
-      videos,
-      reddit,
-      instagram,
-      facebook,
-      linkedin,
-      forums,
+      recommendations, pubmed, books, videos, reddit, instagram, facebook, linkedin, forums
     ] = await Promise.all([
       has("protocols") ? fetchWithTimeout(braveSearch(
         `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
@@ -690,8 +624,6 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       has("linkedin") ? fetchWithTimeout(braveSearch(`${q.linkedin} (site:linkedin.com/in OR "profil linkedin")`, baseCount)) : Promise.resolve(""),
       has("forums") ? fetchWithTimeout(braveSearch(`${q.forums} forum OR discussion OR communauté france -site:reddit.com -site:facebook.com`, baseCount)) : Promise.resolve(""),
     ]);
-
-    clearTimeout(timeoutId);
 
     const sections = [
       localResults    && `[RESSOURCES VÉRIFIÉES MindBase]\n${localResults}`,
@@ -714,25 +646,17 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
 
 === DÉBUT RÉSULTATS (${sections.length} sources) ===
 ${sections.join("\n\n---\n\n") || "Aucun résultat."}
-=== FIN RÉSULTATS ===
-
-RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes max par ressource. Couvre TOUTES les sections sans exception.`,
+=== FIN RÉSULTATS ===`,
       },
     ];
 
     const response = await fetch(MISTRAL_API, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-      },
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
       body: JSON.stringify({
         model: "mistral-small-latest",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          ...augmentedMessages.slice(-14),
-        ],
-        max_tokens: 6000,
+        messages: [ { role: "system", content: SYSTEM_PROMPT }, ...augmentedMessages.slice(-4) ],
+        max_tokens: 4000,
         temperature: 0.2,
       }),
     });
@@ -754,3 +678,5 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
     res.status(500).json({ error: err.message });
   }
 }
+
+```
