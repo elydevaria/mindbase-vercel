@@ -498,7 +498,7 @@ Outil d'aide décisionnelle uniquement.`;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  let { messages } = req.body; 
+  const { messages } = req.body;
   if (!messages?.length) return res.status(400).json({ error: "No messages" });
 
   const lastMessage = messages[messages.length - 1].content;
@@ -507,29 +507,11 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // ─── AUTO-NEW CHAT RESET LOGIC ──────────────────────────────────
-    // Checks if the previous user interaction was an idle closing gesture.
-    // If it was, we isolate this new request as a completely blank slate.
-    if (messages.length >= 3) {
-      const userMessages = messages.filter(m => m.role === "user");
-      if (userMessages.length >= 2) {
-        const previousUserMessage = userMessages[userMessages.length - 2].content.toLowerCase().trim();
-        const wasPreviousMessageIdle = /^(merci|thank you|thanks|ok|super|top|parfait|parfait merci|merci beaucoup)\b\.?$/i.test(previousUserMessage);
-        
-        if (wasPreviousMessageIdle) {
-          process.stdout.write("🔄 AUTO-RESET: Converted post-pleasantry follow-up into a clean new conversation flow.\n");
-          messages = [
-            { role: "user", content: lastMessage }
-          ];
-        }
-      }
-    }
-    // ────────────────────────────────────────────────────────────────
-
+    // Check if user explicitly asked for resources via key phrase buttons
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
     let route = "search";
 
-    // ── Early extraction if explicit button clicked ──
+    // ── Early extraction if button clicked ──
     if (forceSearch) {
       const topicRes = await fetch(MISTRAL_API, {
         method: "POST",
@@ -539,7 +521,7 @@ export default async function handler(req, res) {
           max_tokens: 20,
           temperature: 0,
           messages: [
-            { role: "system", content: "Extrais le sujet clinique PRÉCIS de la conversation en 3-5 mots. Règles strictes: (1) Ne généralise JAMAIS — 'dépression' pas 'santé mentale', 'TDAH adulte' pas 'troubles neurodéveloppementaux'. (2) Garde le terme clinique exact. (3) UNIQUEMENT ces mots, rien d'autre." },
+            { role: "system", content: "Extrais le sujet clinique PRÉCIS de la conversation en 3-5 mots. Règles strictes: (1) Ne généralise JAMAIS — 'dépression' pas 'santé mentale', 'TDAH adulte' pas 'troubles neurodéveloppementaux', 'épisode dépressif adulte' pas 'psychiatrie'. (2) Garde le terme clinique exact tel qu'utilisé dans la conversation. (3) UNIQUEMENT ces mots, rien d'autre." },
             ...messages.slice(-8).filter(m => !(/cherche.moi|ressources cliniques/i.test(m.content || ""))),
           ]
         })
@@ -567,12 +549,12 @@ export default async function handler(req, res) {
           messages: [
             { 
               role: "system", 
-              content: `Tu es un routeur d'intentions cliniques. Qualifie le TOUT DERNIER message de l'utilisateur. 
+              content: `Tu es un routeur d'intentions cliniques. Lis attentivement la conversation et qualifie le TOUT DERNIER message de l'utilisateur. 
 Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
 
-"search"  = L'utilisateur demande, sous-entend ou continue de chercher des ressources, des fiches, des articles, ou des liens.
-"explain" = L'utilisateur pose une question clinique de fond, demande une synthèse, une définition ou une comparaison textuelle.
-"idle"    = L'utilisateur dit simplement merci, salue, valide ("ok top", "ça marche"), ou clôture chaleureusement l'échange.` 
+"search"  = L'utilisateur demande explicitement, sous-entend ou continue de chercher des ressources, des protocoles, des articles, des recommandations (HAS, etc.) ou des liens.
+"explain" = L'utilisateur pose une question clinique de fond, demande une synthèse, une explication thérapeutique, une définition ou une comparaison de symptômes (réponse textuelle uniquement).
+"idle"    = L'utilisateur n'attend aucune action de recherche. Il dit simplement merci, valide une information ("ok top", "ça marche", "parfait"), salue ("bonsoir", "bonjour"), ou clôture chaleureusement l'échange.` 
             },
             ...messages.slice(-6),
           ]
@@ -598,8 +580,8 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       process.stdout.write(`NON-SEARCH ROUTE (${route}) — skipping web/db calls\n`);
       
       const systemContext = route === "idle"
-        ? "Tu es MindBase. L'utilisateur te remercie ou valide tes informations. Réponds de manière brève (1-2 phrases maximum), chaleureuse et professionnelle en restant simplement à sa disposition."
-        : "Tu es MindBase, assistant clinique expert en santé mentale. Réponds de manière précise, structurée et purement textuelle à la question clinique de l'utilisateur.";
+        ? "Tu es MindBase. L'utilisateur te remercie, te salue ou valide tes informations. Réponds de manière brève (1-2 phrases maximum), chaleureuse et professionnelle en restant simplement à sa disposition."
+        : "Tu es MindBase, assistant clinique expert en santé mentale. Réponds de manière précise, structurée et purement textuelle à la question clinique de l'utilisateur en utilisant le contexte.";
 
       const convResponse = await fetch(MISTRAL_API, {
         method: "POST",
@@ -628,9 +610,10 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       return res.json({ reply: finalReply, conversational: true, extractedTopic: req._extractedTopic || null });
     }
 
+    // ── Bind query to clean extracted string safely for search pipeline ──
     const effectiveQuery = req._extractedTopic || lastMessage;
 
-    // ── Cache Layer Lookups ──
+    // ── Local Database & Cache checks ──
     const earlyLocal = await getLocalResources(effectiveQuery);
     const dbResult = await getFromDatabase(effectiveQuery);
     
@@ -643,25 +626,32 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Live Pipelines Generation Intent ──
+    // ── Query & Intent extraction for live search pipelines ──
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(effectiveQuery);
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 10 : 7;
     const protocolCount = has('protocols') && !isGeneral ? 10 : baseCount;
 
+    // Keywords extraction
+    const acronyms = effectiveQuery.match(/\b[A-Z]{2,5}\b/g) || [];
+    const keywords = [
+      ...acronyms.map(a => a.toLowerCase()),
+      ...effectiveQuery
+        .toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9 ]/g, " ")
+        .split(/\s+/)
+        .filter(w => w.length > 3)
+        .filter(w => !["pour","dans","avec","cette","quel","quels","quelle","quelles","comment","trouver","chercher","donne","moi","les","des","une","sur","par","que","qui","est","sont","plus","aussi","mais","avoir","faire","ressources","completes","complètes","livres","videos","réseaux","sociaux","recherches","protocoles"].includes(w))
+    ].filter((w, i, arr) => arr.indexOf(w) === i).slice(0, 8);
+
+    process.stdout.write("KEYWORDS: " + JSON.stringify(keywords) + "\n");
+    process.stdout.write("INTENT: " + JSON.stringify(intentSections) + "\n");
+
     const localResults = earlyLocal;
 
-    // ── Optimized Parallel Searches with Abort Controllers ──
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const fetchWithTimeout = (promise) => 
-      Promise.race([
-        promise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 4000))
-      ]).catch(() => "");
-
+    // ── Parallel Web / Database Searches ──
     const [
       recommendations,
       pubmed,
@@ -673,7 +663,7 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
       linkedin,
       forums,
     ] = await Promise.all([
-      has("protocols") ? fetchWithTimeout(braveSearch(
+      has("protocols") ? braveSearch(
         `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
         protocolCount
       ).then(async (main) => {
@@ -682,18 +672,34 @@ Réponds UNIQUEMENT par l'un de ces trois mots : "search", "explain", ou "idle".
         return [...(ameli ? ameli.split("\n---\n") : []), ...(main ? main.split("\n---\n") : [])]
           .filter(r => { const m = r.match(/URL: (\S+)/); if (!m || seen.has(m[1])) return false; seen.add(m[1]); return true; })
           .join("\n---\n");
-      })) : Promise.resolve(""),
-      has("pubmed") ? fetchWithTimeout(pubmedSearch(q.pubmed_cited, q.pubmed_recent)) : Promise.resolve(""),
-      has("books") ? fetchWithTimeout(braveSearch(`${q.books} site:amazon.fr OR site:fnac.com`, baseCount)) : Promise.resolve(""),
-      has("videos") ? fetchWithTimeout(braveVideoSearch(q.videos, baseCount)) : Promise.resolve(""),
-      has("reddit") ? fetchWithTimeout(redditSearch(q.reddit_fr, q.reddit_en)) : Promise.resolve(""),
-      has("instagram") ? fetchWithTimeout(braveSearch(`site:instagram.com ${q.instagram}`, baseCount)) : Promise.resolve(""),
-      has("facebook") ? fetchWithTimeout(braveSearch(`site:facebook.com ${q.facebook} groupe`, baseCount)) : Promise.resolve(""),
-      has("linkedin") ? fetchWithTimeout(braveSearch(`${q.linkedin} (site:linkedin.com/in OR "profil linkedin")`, baseCount)) : Promise.resolve(""),
-      has("forums") ? fetchWithTimeout(braveSearch(`${q.forums} forum OR discussion france -site:reddit.com`, baseCount)) : Promise.resolve(""),
+      }).catch(() => braveSearch(
+        `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk)`,
+        protocolCount
+      )) : Promise.resolve(""),
+      has("pubmed") ? pubmedSearch(q.pubmed_cited, q.pubmed_recent) : Promise.resolve(""),
+      has("books") ? braveSearch(
+        `${q.books} site:amazon.fr OR site:fnac.com OR site:decitre.fr OR site:leslibraires.fr`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("videos") ? braveVideoSearch(q.videos, baseCount) : Promise.resolve(""),
+      has("reddit") ? redditSearch(q.reddit_fr, q.reddit_en) : Promise.resolve(""),
+      has("instagram") ? braveSearch(
+        `site:instagram.com ${q.instagram}`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("facebook") ? braveSearch(
+        `site:facebook.com ${q.facebook} groupe`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("linkedin") ? braveSearch(
+        `${q.linkedin} (site:linkedin.com/in OR "profil linkedin")`,
+        baseCount
+      ) : Promise.resolve(""),
+      has("forums") ? braveSearch(
+        `${q.forums} forum OR discussion OR communauté france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:youtube.com`,
+        baseCount
+      ) : Promise.resolve(""),
     ]);
-
-    clearTimeout(timeoutId);
 
     const sections = [
       localResults    && `[RESSOURCES VÉRIFIÉES MindBase]\n${localResults}`,
@@ -732,9 +738,9 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
         model: "mistral-small-latest",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          ...augmentedMessages.slice(-4), // Clean sliced context window prevents formatting crash out
+          ...augmentedMessages.slice(-14),
         ],
-        max_tokens: 4000,
+        max_tokens: 6000,
         temperature: 0.2,
       }),
     });
