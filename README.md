@@ -1,4 +1,4 @@
-# MindBase — Agent Recherche en Santé Mentale
+# MindBase — Agent de la Recherche en Santé Mentale
 
 Un outil de recherche intelligent pour les praticiens français en santé mentale — psychiatres, psychologues, psychothérapeutes.
 
