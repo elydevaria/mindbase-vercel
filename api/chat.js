@@ -632,9 +632,11 @@ Toujours en français, concis et précis.` },
     // ── Step 3: Intent detection + query generation ───────────────
     const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
-    // If resource button was clicked → always search all sections
-    const isGeneral = intentSections.length === 0 || !!req._extractedTopic;
+    // forceSearch (resource button or chip) = always all sections
+    // otherwise let intent detection decide
+    const isGeneral = intentSections.length === 0 || !!req._extractedTopic || forceSearch;
     const has = (s) => isGeneral || intentSections.includes(s);
+    process.stdout.write(`IS_GENERAL: ${isGeneral} forceSearch: ${forceSearch} sections: ${JSON.stringify(intentSections)}\n`);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 10 : 7;
     const protocolCount = has('protocols') && !isGeneral ? 10 : baseCount;
 
