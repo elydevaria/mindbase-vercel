@@ -554,10 +554,10 @@ export default async function handler(req, res) {
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
         body: JSON.stringify({
           model: "mistral-small-latest",
-          max_tokens: 50,
+          max_tokens: 20,
           temperature: 0,
           messages: [
-            { role: "system", content: "Tu es un assistant clinique. Lis la conversation et identifie le sujet clinique PRÉCIS en 4-8 mots en français. Sois spécifique — pas juste 'dépression' mais 'épisode dépressif caractérisé chez l'adulte', pas juste 'TDAH' mais 'TDAH adulte diagnostic et prise en charge'. Réponds UNIQUEMENT avec le sujet, rien d'autre." },
+            { role: "system", content: "Identifie le sujet clinique principal en 3-5 mots maximum. Court et précis. Exemples: 'épisode dépressif adulte', 'TDAH adulte', 'trouble anxieux généralisé', 'schizophrénie diagnostic'. Réponds UNIQUEMENT avec ces mots, rien d'autre." },
             ...messages.slice(-10),
           ]
         })
@@ -565,7 +565,7 @@ export default async function handler(req, res) {
       const topicData = await topicRes.json();
       const extractedTopic = topicData.choices?.[0]?.message?.content?.trim().replace(/^["'«»]+|["'«»]+$/g, "");
       if (extractedTopic) {
-        messages[messages.length - 1] = { role: "user", content: `Ressources complètes sur ${extractedTopic} — protocoles, livres, vidéos, réseaux sociaux, recherches` };
+        messages[messages.length - 1] = { role: "user", content: `Ressources sur ${extractedTopic}` };
         process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
         // Store extracted topic to return with response
         req._extractedTopic = extractedTopic;
