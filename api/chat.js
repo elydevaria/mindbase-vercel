@@ -43,6 +43,7 @@ async function supaFetch(path, method = "GET", body) {
 }
 
 // Normalize question to a consistent hash key
+// "Protocoles TCC pour l'anxiété ?" → "protocoles tcc pour l anxiete"
 function normalizeQuery(q) {
   return q
     .toLowerCase()
@@ -54,6 +55,8 @@ function normalizeQuery(q) {
 }
 
 // ─── Local curated resources ─────────────────────────────────
+// Simple, reliable — no Mistral, no failure risk
+// Matches question against a hardcoded topic map
 const CLINICAL_TOPICS = {
   tdah:         ["tdah","adhd","attention","hyperactivite","deficit"],
   depression:   ["depression","depressif","depressive","humeur"],
@@ -125,6 +128,8 @@ async function getLocalResources(question) {
 }
 
 // ─── Database lookup ──────────────────────────────────────────────
+// Checks if we have a stored result for this query
+// Returns: { result, sections, fromDb: true } or null
 async function getFromDatabase(question) {
   try {
     if (!SUPABASE_URL || !SUPABASE_KEY) return null;
@@ -135,15 +140,20 @@ async function getFromDatabase(question) {
     if (!Array.isArray(data) || data.length === 0) return null;
 
     const entry = data[0];
+
+    // Check freshness — stable content (protocols, books) valid 7 days
+    // Dynamic content (forums, reddit) valid 1 day
     const ageHours = (Date.now() - new Date(entry.last_searched).getTime()) / 3600000;
     const sections = entry.sections || [];
     const hasDynamicSections = sections.some(s => ["reddit","forums","instagram"].includes(s));
-    const maxAge = hasDynamicSections ? 24 : 168;
+    const maxAge = hasDynamicSections ? 24 : 168; // 1 day or 7 days
 
     if (ageHours > maxAge) {
+      // Entry is stale — will refresh but keep the id for update
       return { stale: true, id: entry.id, sections };
     }
 
+    // Increment hit count asynchronously (don't wait)
     supaFetch(
       `query_database?id=eq.${entry.id}`,
       "PATCH",
@@ -166,6 +176,7 @@ async function storeInDatabase(question, result, sections, existingId = null) {
     const now = new Date().toISOString();
 
     if (existingId) {
+      // Update stale entry
       await supaFetch(`query_database?id=eq.${existingId}`, "PATCH", {
         result,
         sections,
@@ -173,6 +184,7 @@ async function storeInDatabase(question, result, sections, existingId = null) {
       });
       process.stdout.write(`DB UPDATED: ${hash.slice(0, 50)}\n`);
     } else {
+      // Insert new entry
       await supaFetch("query_database", "POST", {
         query_hash: hash,
         question,
@@ -186,6 +198,8 @@ async function storeInDatabase(question, result, sections, existingId = null) {
     process.stdout.write("DB STORE ERROR: " + e.message + "\n");
   }
 }
+
+
 
 // ─── Brave Web Search ─────────────────────────────────────────────
 async function braveSearch(query, count = 5) {
@@ -246,7 +260,7 @@ async function braveVideoSearch(query, count = 5) {
   } catch (e) { return ""; }
 }
 
-// ─── PubMed API ──────────────────────────────────────────────────
+// ─── PubMed API — free, no Brave credits ─────────────────────────
 async function pubmedSearch(citedQuery, recentQuery) {
   try {
     const base = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils`;
@@ -264,6 +278,7 @@ async function pubmedSearch(citedQuery, recentQuery) {
     const summaryRes = await fetch(`${base}/esummary.fcgi?db=pubmed&id=${allIds.join(",")}&retmode=json`);
     const summaryData = await summaryRes.json();
 
+    // Filter out non-research content
     const SKIP_TITLES = ["obituary", "in memoriam", "erratum", "correction", "retraction", "author reply"];
     const SKIP_TYPES = ["obituary", "published erratum", "retracted publication", "comment", "letter"];
 
@@ -287,7 +302,7 @@ async function pubmedSearch(citedQuery, recentQuery) {
   } catch (e) { return ""; }
 }
 
-// ─── Reddit searches ──────────────────────────────────────────────
+// ─── Reddit OAuth or Brave fallback ───────────────────────────────
 async function getRedditToken() {
   const res = await fetch("https://www.reddit.com/api/v1/access_token", {
     method: "POST",
@@ -353,7 +368,7 @@ async function redditSearch(queryFr, queryEn) {
   }
 }
 
-// ─── Intent / Queries generation ──────────────────────────────────
+// ─── Combined: intent detection + query generation (single Mistral call) ────
 async function generateQueriesAndIntent(userMessage) {
   const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
   try {
@@ -412,6 +427,7 @@ Ex: pour "épisode dépressif adulte" → toutes les requêtes doivent contenir 
     if (!match) throw new Error("no json");
     const parsed = JSON.parse(match[0]);
 
+    // Fuzzy validate sections — map close matches to canonical names
     const SECTION_MAP = {
       "protocols": "protocols", "protocol": "protocols", "recommandations": "protocols",
       "recommendation": "protocols", "guidelines": "protocols", "guideline": "protocols",
@@ -434,6 +450,7 @@ Ex: pour "épisode dépressif adulte" → toutes les requêtes doivent contenir 
     return { queries: parsed, sections };
   } catch (e) {
     process.stdout.write("INTENT ERROR: " + e.message + "\n");
+    // Keyword fallback — better than showing everything
     const m = userMessage.toLowerCase();
     const t = userMessage.slice(0, 40);
     let fallbackSections = [];
@@ -445,7 +462,7 @@ Ex: pour "épisode dépressif adulte" → toutes les requêtes doivent contenir 
     else if (/r[eé]seau|social/.test(m)) fallbackSections = ["instagram","facebook","linkedin","reddit"];
     else if (/recherche|[eé]tude|pubmed|article/.test(m)) fallbackSections = ["pubmed"];
     else if (/linkedin/.test(m)) fallbackSections = ["linkedin"];
-    
+    // If still empty → run all (truly general query)
     return {
       sections: fallbackSections,
       queries: {
@@ -493,7 +510,7 @@ Pour Forums : max 5 résultats, uniquement forums médicaux/professionnels fran�
 Par ressource, utilise EXACTEMENT ce format (ne pas écrire les mots "titre en gras") :
 **[Titre de la ressource]**
 [Une phrase de description.]
-https://www.merriam-webster.com/dictionary/exact
+[URL exacte]
 Si seulement 1-2 sections ont des résultats, affiche-les en détail complet sans limite de lignes.
 Outil d'aide décisionnelle uniquement.`;
 
@@ -509,11 +526,33 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_URL set: ${!!process.env.SUPABASE_URL}\n`);
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
-    // Check if user explicitly asked for resources
+    // ── Step 0: Mistral decides: search resources OR answer directly ─
+    const routeRes = await fetch(MISTRAL_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "mistral-small-latest",
+        max_tokens: 5,
+        temperature: 0,
+        messages: [
+          { role: "system", content: `Tu es un routeur. Lis la conversation et réponds UNIQUEMENT par "search" ou "answer".
+"search" = l'utilisateur cherche des ressources/protocoles/articles/livres/communautés sur un sujet clinique.
+"answer" = l'utilisateur veut une reformulation, synthèse, explication, définition, comparaison, ou envoie un texte à traiter.` },
+          ...messages.slice(-6),
+        ]
+      }),
+    });
+    const routeData = await routeRes.json();
+    // Force search if user explicitly asks for resources
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
-    let route = "search";
+    const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search");
 
-    // ── Early extraction if button clicked ──
+    // ── Resource button clicked: extract topic → use as search query ──
+    // This replaces the generic "cherche moi les ressources..." with the
+    // precise clinical topic. Only THIS topic gets cached — not the generic message.
     if (forceSearch) {
       const topicRes = await fetch(MISTRAL_API, {
         method: "POST",
@@ -533,34 +572,13 @@ export default async function handler(req, res) {
       process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
 
       if (extractedTopic) {
-        // Swap out generic phrase with clean clinical term across context arrays
+        // Replace the last message (generic request) with the precise topic
+        // This is what gets passed to intent detection + cached
         messages[messages.length - 1] = { role: "user", content: extractedTopic };
         req._extractedTopic = extractedTopic;
       }
-    } else {
-      // Standard dynamic evaluation if button was not explicitly selected
-      const routeRes = await fetch(MISTRAL_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "mistral-small-latest",
-          max_tokens: 5,
-          temperature: 0,
-          messages: [
-            { role: "system", content: `Tu es un routeur. Lis la conversation et réponds UNIQUEMENT par "search" ou "answer".
-"search" = l'utilisateur cherche des ressources/protocoles/articles/livres/communautés sur un sujet clinique.
-"answer" = l'utilisateur veut une reformulation, synthèse, explication, définition, comparaison, ou envoie un texte à traiter.` },
-            ...messages.slice(-6),
-          ]
-        }),
-      });
-      const routeData = await routeRes.json();
-      route = (routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search";
+      // Fall through to normal intent-based search with the extracted topic
     }
-
     process.stdout.write(`ROUTE: ${route}\n`);
 
     if (route === "answer") {
@@ -576,6 +594,9 @@ export default async function handler(req, res) {
           messages: [
             { role: "system", content: `Tu es MindBase, assistant clinique expert en santé mentale pour praticiens français.
 Réponds directement à la demande en utilisant le contexte de la conversation.
+- Texte à synthétiser/reformuler → fais-le directement
+- Question conceptuelle → réponds avec tes connaissances cliniques
+- Pas assez de contexte → demande poliment ce qu'il faut traiter
 Toujours en français, concis et précis.` },
             ...messages.slice(-10),
           ],
@@ -589,35 +610,37 @@ Toujours en français, concis et précis.` },
       return res.json({ reply: withOffer, conversational: true });
     }
 
-    // ── Bind query to clean extracted string safely for everything below ──
+    // ── Step 1: Always run local DB first (0 credits, always fresh) ─
+    // Use extracted topic if available (from resource button click)
     const effectiveQuery = req._extractedTopic || lastMessage;
-
-    // ── Step 1 & 2: Local Cache checks execute with the clean topic ──
     const earlyLocal = await getLocalResources(effectiveQuery);
+
+    // ── Step 2: Check query cache (use extracted topic as key) ────
     const dbResult = await getFromDatabase(effectiveQuery);
-    
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
       const reply = earlyLocal
         ? `### ✅ Ressources vérifiées MindBase\n${earlyLocal.split("\n\n===\n\n").map(s => s.replace(/\[[^\]]+\]\n/, "")).join("\n\n")}\n\n---\n\n` + dbResult.result
         : dbResult.result;
-      return res.json({ reply, source: "database", extractedTopic: req._extractedTopic || null });
+      return res.json({ reply, source: "database" });
     }
     const staleId = dbResult?.stale ? dbResult.id : null;
 
-    // ── Step 3: Intent detection processes the clean query term ──
-    const { sections: intentSections, queries: q } = await generateQueriesAndIntent(effectiveQuery);
+    // ── Step 3: Intent detection + query generation ───────────────
+    const { sections: intentSections, queries: q } = await generateQueriesAndIntent(lastMessage);
     const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
     const isGeneral = intentSections.length === 0;
     const has = (s) => isGeneral || intentSections.includes(s);
     const baseCount = isGeneral ? 5 : intentSections.length <= 2 ? 10 : 7;
     const protocolCount = has('protocols') && !isGeneral ? 10 : baseCount;
 
-    // Keywords extraction
-    const acronyms = effectiveQuery.match(/\b[A-Z]{2,5}\b/g) || [];
+    // ── Extract keywords for local DB lookup ────────────────────
+    // Simple keyword extraction from the question
+    // Extract keywords — include both normalized words AND original acronyms (TDAH, TCA etc)
+    const acronyms = lastMessage.match(/\b[A-Z]{2,5}\b/g) || [];
     const keywords = [
       ...acronyms.map(a => a.toLowerCase()),
-      ...effectiveQuery
+      ...lastMessage
         .toLowerCase()
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-z0-9 ]/g, " ")
@@ -630,9 +653,10 @@ Toujours en français, concis et précis.` },
     process.stdout.write("INTENT: " + JSON.stringify(intentSections) + "\n");
     process.stdout.write("QUERY recommendations: " + JSON.stringify(q.recommendations?.slice(0,60)) + "\n");
 
-    const localResults = earlyLocal;
+    // ── Local curated resources — always runs, 0 API credits ────
+    const localResults = earlyLocal; // reuse already fetched local results
 
-    // ── Parallel Search Requests ──
+    // ── Run only relevant searches in parallel ────────────────────
     const [
       recommendations,
       pubmed,
@@ -644,6 +668,7 @@ Toujours en français, concis et précis.` },
       linkedin,
       forums,
     ] = await Promise.all([
+      // protocols: run both searches then merge
       has("protocols") ? braveSearch(
         `${q.recommendations} (site:has-sante.fr OR site:ameli.fr OR site:inserm.fr OR site:ansm.sante.fr OR site:nice.org.uk OR site:cochranelibrary.com OR site:who.int)`,
         protocolCount
@@ -699,7 +724,7 @@ Toujours en français, concis et précis.` },
       ...messages.slice(0, -1),
       {
         role: "user",
-        content: `${effectiveQuery}
+        content: `${lastMessage}
 
 === DÉBUT RÉSULTATS (${sections.length} sources) ===
 ${sections.join("\n\n---\n\n") || "Aucun résultat."}
@@ -730,14 +755,16 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
     if (data.error) return res.status(500).json({ error: data.error.message });
 
     const reply = data.choices?.[0]?.message?.content || "Aucun résultat.";
+    const extractedTopic = req._extractedTopic || null;
 
+    // ── Step 3: Store result in database ────────────────────────
     try {
       await storeInDatabase(effectiveQuery, reply, intentSections, staleId);
     } catch (e) {
       process.stdout.write("STORE FAILED: " + e.message + "\n");
     }
 
-    res.json({ reply, extractedTopic: req._extractedTopic || null });
+    res.json({ reply, extractedTopic });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
