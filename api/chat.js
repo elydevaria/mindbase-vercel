@@ -546,9 +546,10 @@ export default async function handler(req, res) {
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
     const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search");
 
-    // If resource search triggered from conversational context,
-    // extract clean topic from conversation history and use as effective query
-    if (forceSearch && messages.length > 1) {
+    // ── Resource button clicked: extract topic → use as search query ──
+    // This replaces the generic "cherche moi les ressources..." with the
+    // precise clinical topic. Only THIS topic gets cached — not the generic message.
+    if (forceSearch) {
       const topicRes = await fetch(MISTRAL_API, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
@@ -557,19 +558,22 @@ export default async function handler(req, res) {
           max_tokens: 20,
           temperature: 0,
           messages: [
-            { role: "system", content: "Identifie le sujet clinique principal en 3-5 mots maximum. Court et précis. Exemples: 'épisode dépressif adulte', 'TDAH adulte', 'trouble anxieux généralisé', 'schizophrénie diagnostic'. Réponds UNIQUEMENT avec ces mots, rien d'autre." },
-            ...messages.slice(-10),
+            { role: "system", content: "Extrais le sujet clinique PRÉCIS de la conversation en 3-5 mots. Règles strictes: (1) Ne généralise JAMAIS — 'dépression' pas 'santé mentale', 'TDAH adulte' pas 'troubles neurodéveloppementaux', 'épisode dépressif adulte' pas 'psychiatrie'. (2) Garde le terme clinique exact tel qu'utilisé dans la conversation. (3) UNIQUEMENT ces mots, rien d'autre." },
+            ...messages.slice(-8).filter(m => !(/cherche.moi|ressources cliniques/i.test(m.content || ""))),
           ]
         })
       });
       const topicData = await topicRes.json();
-      const extractedTopic = topicData.choices?.[0]?.message?.content?.trim().replace(/^["'«»]+|["'«»]+$/g, "");
+      const extractedTopic = (topicData.choices?.[0]?.message?.content || "").trim().replace(/^["'«»\s]+|["'«»\s]+$/g, "");
+      process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
+
       if (extractedTopic) {
-        messages[messages.length - 1] = { role: "user", content: `Ressources sur ${extractedTopic}` };
-        process.stdout.write(`TOPIC EXTRACTED: "${extractedTopic}"\n`);
-        // Store extracted topic to return with response
+        // Replace the last message (generic request) with the precise topic
+        // This is what gets passed to intent detection + cached
+        messages[messages.length - 1] = { role: "user", content: extractedTopic };
         req._extractedTopic = extractedTopic;
       }
+      // Fall through to normal intent-based search with the extracted topic
     }
     process.stdout.write(`ROUTE: ${route}\n`);
 
@@ -603,10 +607,12 @@ Toujours en français, concis et précis.` },
     }
 
     // ── Step 1: Always run local DB first (0 credits, always fresh) ─
-    const earlyLocal = await getLocalResources(lastMessage);
+    // Use extracted topic if available (from resource button click)
+    const effectiveQuery = req._extractedTopic || lastMessage;
+    const earlyLocal = await getLocalResources(effectiveQuery);
 
-    // ── Step 2: Check query cache ──────────────────────────────────
-    const dbResult = await getFromDatabase(lastMessage);
+    // ── Step 2: Check query cache (use extracted topic as key) ────
+    const dbResult = await getFromDatabase(effectiveQuery);
     if (dbResult && !dbResult.stale && dbResult.fromDb) {
       process.stdout.write(`CACHE HIT — local injected: ${!!earlyLocal}\n`);
       const reply = earlyLocal
@@ -749,7 +755,7 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
 
     // ── Step 3: Store result in database ────────────────────────
     try {
-      await storeInDatabase(lastMessage, reply, intentSections, staleId);
+      await storeInDatabase(effectiveQuery, reply, intentSections, staleId);
     } catch (e) {
       process.stdout.write("STORE FAILED: " + e.message + "\n");
     }
