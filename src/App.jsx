@@ -422,9 +422,13 @@ export default function MindBase() {
   const [showLibrary, setShowLibrary] = useState(false);
   const [library, setLibrary] = useState([]);
   const [toast, setToast] = useState("");
+  const [conversations, setConversations] = useState([]);
+  const [currentConvId, setCurrentConvId] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
   const chatRef = useRef(null);
+  const saveTimerRef = useRef(null);
 
-  useEffect(() => { if (userId) loadLibrary(userId); }, [userId]);
+  useEffect(() => { if (userId) { loadLibrary(userId); loadConversations(userId); } }, [userId]);
   useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [messages, loading]);
 
   async function loadLibrary(uid) {
@@ -436,6 +440,69 @@ export default function MindBase() {
   }
 
   function showToast(msg) { setToast(msg); setTimeout(()=>setToast(""), 2500); }
+
+  async function loadConversations(uid) {
+    try {
+      const res = await fetch(`${API}/api/library?conversations=1&userId=${encodeURIComponent(uid)}`);
+      const data = await res.json();
+      setConversations(data.conversations || []);
+    } catch(e) { setConversations([]); }
+  }
+
+  async function loadConversation(id) {
+    try {
+      const res = await fetch(`${API}/api/library?conversations=1&userId=${encodeURIComponent(userId)}&id=${id}`);
+      const data = await res.json();
+      if (data.messages) {
+        const msgs = data.messages;
+        setMessages(msgs);
+        setHistory(msgs.map(m => ({ role: m.type === "user" ? "user" : "assistant", content: m.text })));
+        setCurrentConvId(id);
+        setShowHistory(false);
+      }
+    } catch(e) {}
+  }
+
+  async function saveConversation(msgs, convId) {
+    if (!userId || msgs.length === 0) return;
+    try {
+      // Generate title from first user message
+      const firstUser = msgs.find(m => m.type === "user");
+      const title = firstUser ? firstUser.text.slice(0, 60).replace(/[#*\n]/g, " ").trim() : "Conversation";
+      if (convId) {
+        await fetch(`${API}/api/library?conversations=1&id=${convId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: msgs }),
+        });
+      } else {
+        const res = await fetch(`${API}/api/library?conversations=1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, title, messages: msgs }),
+        });
+        const data = await res.json();
+        if (data.id) setCurrentConvId(data.id);
+      }
+      loadConversations(userId);
+    } catch(e) {}
+  }
+
+  function newConversation() {
+    setMessages([]);
+    setHistory([]);
+    setCurrentConvId(null);
+    setInput("");
+    setShowHistory(false);
+  }
+
+  async function deleteConversation(id) {
+    try {
+      await fetch(`${API}/api/library?conversations=1&id=${id}`, { method: "DELETE" });
+      setConversations(c => c.filter(x => x.id !== id));
+      if (currentConvId === id) newConversation();
+    } catch(e) {}
+  }
 
   async function saveToLibrary({ title, tags, note, content }) {
     try {
@@ -493,7 +560,13 @@ export default function MindBase() {
         ));
       }
       setHistory([...newHistory, { role:"assistant", content:data.reply }].slice(-16));
-      setMessages(m=>[...m, { type:"agent", text:data.reply, conversational:data.conversational }]);
+      setMessages(m => {
+        const updated = [...m, { type:"agent", text:data.reply, conversational:data.conversational }];
+        // Auto-save conversation after each exchange
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => saveConversation(updated, currentConvId), 1000);
+        return updated;
+      });
     } catch(e) {
       setMessages(m=>[...m, { type:"error", text:e.message }]);
     }
