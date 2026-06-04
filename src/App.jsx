@@ -632,6 +632,16 @@ export default function MindBase() {
           <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#4a4540" }}>Analyser PDFs &amp; liens</div><div style={{ fontSize:10, color:"#a09a93" }}>Plusieurs fichiers et URLs</div></div>
         </button>
 
+        <button onClick={()=>{ loadConversations(userId); setShowHistory(true); }} style={{ margin:"8px 14px 0", padding:"10px 14px", background:"#f5f3ee", border:"1px solid #e2ddd5", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>e.currentTarget.style.background="#eaf3ee"} onMouseLeave={e=>e.currentTarget.style.background="#f5f3ee"}>
+          <span style={{ fontSize:16 }}>🕐</span>
+          <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#4a4540" }}>Historique</div><div style={{ fontSize:10, color:"#a09a93" }}>{conversations.length} conversation{conversations.length!==1?"s":""}</div></div>
+        </button>
+
+        <button onClick={newConversation} style={{ margin:"8px 14px 0", padding:"10px 14px", background:"#f5f3ee", border:"1px dashed #e2ddd5", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>e.currentTarget.style.background="#eaf3ee"} onMouseLeave={e=>e.currentTarget.style.background="#f5f3ee"}>
+          <span style={{ fontSize:16 }}>✏️</span>
+          <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#4a4540" }}>Nouvelle conversation</div><div style={{ fontSize:10, color:"#a09a93" }}>Recommencer</div></div>
+        </button>
+
         <div style={{ padding:"14px 14px 8px", borderTop:"1px solid #f0ede6", marginTop:12 }}>
           <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.07em", color:"#a09a93", fontWeight:500, marginBottom:8 }}>Exemples de questions</div>
           {QUICK_SUGGESTIONS.map((s,i)=><button key={i} onClick={()=>sendMessage(s)} style={{ display:"block", width:"100%", textAlign:"left", padding:"7px 9px", border:"none", background:"none", fontSize:11, color:"#6b6560", borderRadius:7, cursor:"pointer", marginBottom:2, lineHeight:1.4, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.color="#2d5a3d";}} onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.color="#6b6560";}}>{s.length>54?s.slice(0,54)+"…":s}</button>)}
