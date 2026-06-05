@@ -755,6 +755,34 @@ export default function MindBase() {
           {!isMobile && <div style={{ fontSize:11, color:"#a09a93", marginTop:7, textAlign:"center" }}>HAS · ANSM · Inserm · OMS · PubMed · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac</div>}
         </div>
       </div>
+      {/* History panel */}
+      {showHistory && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center" }} onClick={()=>setShowHistory(false)}>
+          <div style={{ background:"#fff", borderRadius:16, width:520, maxWidth:"93vw", maxHeight:"85vh", display:"flex", flexDirection:"column", overflow:"hidden" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ padding:"16px 20px", borderBottom:"1px solid #e2ddd5", display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ fontFamily:"Georgia,serif", fontSize:18, color:"#1c1917", flex:1 }}>🕐 Historique</div>
+              <button onClick={()=>{newConversation();}} style={{ padding:"6px 12px", background:"#eaf3ee", border:"1px solid #a8cdb5", borderRadius:20, cursor:"pointer", fontSize:11, color:"#2d5a3d", fontFamily:"system-ui,sans-serif", fontWeight:500 }}>✏️ Nouvelle</button>
+              <button onClick={()=>setShowHistory(false)} style={{ border:"none", background:"none", fontSize:22, cursor:"pointer", color:"#a09a93", lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", display:"flex", flexDirection:"column", gap:6 }}>
+              {conversations.length === 0 && (
+                <div style={{ textAlign:"center", padding:"40px 20px", color:"#a09a93", fontSize:13 }}>Aucune conversation sauvegardée.<br/>Vos prochaines conversations apparaîtront ici automatiquement.</div>
+              )}
+              {conversations.map(conv => (
+                <div key={conv.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", border:`1px solid ${currentConvId===conv.id?"#a8cdb5":"#e2ddd5"}`, borderRadius:10, background:currentConvId===conv.id?"#eaf3ee":"#f9f7f4", cursor:"pointer", transition:"background 0.15s" }}
+                  onClick={()=>loadConversation(conv.id)}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:500, color:"#1c1917", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{conv.title}</div>
+                    <div style={{ fontSize:10, color:"#a09a93", marginTop:2 }}>{new Date(conv.updated_at).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"})}</div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();if(window.confirm("Supprimer cette conversation ?"))deleteConversation(conv.id);}} style={{ border:"none", background:"none", cursor:"pointer", fontSize:14, color:"#cec9bf", flexShrink:0, padding:4 }}>🗑</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`@keyframes blink{0%,60%,100%{opacity:0.3;transform:scale(0.85)}30%{opacity:1;transform:scale(1)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*::-webkit-scrollbar{width:4px}*::-webkit-scrollbar-thumb{background:#cec9bf;border-radius:2px}`}</style>
     </div>
   );
