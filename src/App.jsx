@@ -424,9 +424,11 @@ export default function MindBase() {
   const [toast, setToast] = useState("");
   const [conversations, setConversations] = useState([]);
   const [currentConvId, setCurrentConvId] = useState(null);
+  const setConvId = (id) => { setCurrentConvId(id); currentConvIdRef.current = id; };
   const [showHistory, setShowHistory] = useState(false);
   const chatRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const currentConvIdRef = useRef(null);
 
   useEffect(() => { if (userId) { loadLibrary(userId); loadConversations(userId); } }, [userId]);
   useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [messages, loading]);
@@ -482,16 +484,17 @@ export default function MindBase() {
           body: JSON.stringify({ userId, title, messages: msgs }),
         });
         const data = await res.json();
-        if (data.id) setCurrentConvId(data.id);
+        console.log("save response:", data);
+        if (data.id) setConvId(data.id);
       }
       loadConversations(userId);
-    } catch(e) {}
+    } catch(e) { console.error("saveConversation error:", e); }
   }
 
   function newConversation() {
     setMessages([]);
     setHistory([]);
-    setCurrentConvId(null);
+    setConvId(null);
     setInput("");
     setShowHistory(false);
   }
@@ -564,7 +567,7 @@ export default function MindBase() {
         const updated = [...m, { type:"agent", text:data.reply, conversational:data.conversational }];
         // Auto-save conversation after each exchange
         clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = setTimeout(() => saveConversation(updated, currentConvId), 1000);
+        saveTimerRef.current = setTimeout(() => saveConversation(updated, currentConvIdRef.current), 1000);
         return updated;
       });
     } catch(e) {
