@@ -17,7 +17,14 @@ function supa(path, method = "GET", body) {
 }
 
 export default async function handler(req, res) {
-  const { method, query, body } = req;
+  const { method, query } = req;
+
+  // Parse body explicitly
+  let body = req.body;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch(e) { body = {}; }
+  }
+  body = body || {};
 
   try {
     // GET /api/library?userId=xxx — fetch library
@@ -50,7 +57,8 @@ export default async function handler(req, res) {
       }
       if (method === "POST") {
         const { userId, title, messages } = body;
-        if (!userId || !messages) return res.status(400).json({ error: "Missing fields" });
+        console.log("CONV POST body:", JSON.stringify({ userId, title, hasMessages: !!messages }));
+        if (!userId || !messages) return res.status(400).json({ error: "Missing fields", debug: { userId: !!userId, messages: !!messages, bodyKeys: Object.keys(body) } });
         const data = await supa("conversations", "POST", {
           user_id: userId,
           title: title || "Nouvelle conversation",
@@ -120,7 +128,8 @@ export default async function handler(req, res) {
       }
       if (method === "POST") {
         const { userId, title, messages } = body;
-        if (!userId || !messages) return res.status(400).json({ error: "Missing fields" });
+        console.log("CONV POST body:", JSON.stringify({ userId, title, hasMessages: !!messages }));
+        if (!userId || !messages) return res.status(400).json({ error: "Missing fields", debug: { userId: !!userId, messages: !!messages, bodyKeys: Object.keys(body) } });
         const data = await supa("conversations", "POST", {
           user_id: userId,
           title: title || "Nouvelle conversation",
