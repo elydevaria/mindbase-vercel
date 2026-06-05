@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   try {
     // GET /api/library?userId=xxx — fetch library
     // GET /api/library?userId=xxx&check=1 — check if username exists
-    if (method === "GET") {
+    if (method === "GET" && !query.conversations) {
       const { userId, check } = query;
       if (!userId) return res.status(400).json({ error: "userId required" });
 
@@ -36,7 +36,6 @@ export default async function handler(req, res) {
       return res.json({ items: Array.isArray(data) ? data : [] });
     }
 
-    // ── Conversations ─────────────────────────────────────────────
     if (query.conversations === "1") {
       if (method === "GET") {
         const { userId, id } = query;
