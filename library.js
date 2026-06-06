@@ -18,13 +18,23 @@ function supa(path, method = "GET", body) {
 
 export default async function handler(req, res) {
   const { method, query } = req;
+  console.log("LIBRARY v2:", method, JSON.stringify(query));
 
-  // Parse body explicitly
-  let body = req.body;
-  if (typeof body === "string") {
-    try { body = JSON.parse(body); } catch(e) { body = {}; }
-  }
-  body = body || {};
+  // Parse body — handle all Vercel body formats
+  let body = {};
+  try {
+    if (req.body) {
+      body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    } else {
+      // Read raw body if not parsed
+      const raw = await new Promise((resolve) => {
+        let data = "";
+        req.on("data", chunk => data += chunk);
+        req.on("end", () => resolve(data));
+      });
+      if (raw) body = JSON.parse(raw);
+    }
+  } catch(e) { body = {}; }
 
   // ── CONVERSATIONS — must be checked FIRST ──────────────────────
   if (String(query.conversations) === "1") {
