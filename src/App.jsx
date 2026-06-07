@@ -445,7 +445,7 @@ export default function MindBase() {
 
   async function loadConversations(uid) {
     try {
-      const res = await fetch(`${API}/api/conversations?userId=${encodeURIComponent(uid)}`);
+      const res = await fetch(`${API}/api/library?conversations=1&userId=${encodeURIComponent(uid)}`);
       const data = await res.json();
       setConversations(data.conversations || []);
     } catch(e) { setConversations([]); }
@@ -453,7 +453,7 @@ export default function MindBase() {
 
   async function loadConversation(id) {
     try {
-      const res = await fetch(`${API}/api/conversations?userId=${encodeURIComponent(userId)}&id=${id}`);
+      const res = await fetch(`${API}/api/library?conversations=1&userId=${encodeURIComponent(userId)}&id=${id}`);
       const data = await res.json();
       if (data.messages) {
         const msgs = data.messages;
@@ -472,13 +472,13 @@ export default function MindBase() {
       const firstUser = msgs.find(m => m.type === "user");
       const title = firstUser ? firstUser.text.slice(0, 60).replace(/[#*\n]/g, " ").trim() : "Conversation";
       if (convId) {
-        await fetch(`${API}/api/conversations?id=${convId}`, {
+        await fetch(`${API}/api/library?conversations=1&id=${convId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ messages: msgs }),
         });
       } else {
-        const res = await fetch(`${API}/api/conversations`, {
+        const res = await fetch(`${API}/api/library?conversations=1`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId, title, messages: msgs }),
@@ -501,7 +501,7 @@ export default function MindBase() {
 
   async function deleteConversation(id) {
     try {
-      await fetch(`${API}/api/conversations?id=${id}`, { method: "DELETE" });
+      await fetch(`${API}/api/library?conversations=1&id=${id}`, { method: "DELETE" });
       setConversations(c => c.filter(x => x.id !== id));
       if (currentConvId === id) newConversation();
     } catch(e) {}
