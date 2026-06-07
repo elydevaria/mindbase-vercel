@@ -486,7 +486,7 @@ const SYSTEM_PROMPT = `Tu es MindBase, agent clinique expert en santé mentale p
 LANGUE : Français uniquement.
 
 RÈGLES ABSOLUES :
-1. Utilise UNIQUEMENT les URLs exactes des résultats fournis entre les marqueurs === ===
+1. Utilise UNIQUEMENT les URLs exactes des résultats fournis. Copie l'URL telle quelle, sans rien ajouter à la fin (pas de 'i', pas de '$0', pas de caractères supplémentaires)
 2. N'affiche UNE SECTION que si elle contient des résultats réels dans les données fournies
 3. Si une section n'a AUCUN résultat dans les données → NE L'AFFICHE PAS DU TOUT, même pas le titre
 4. Ne génère JAMAIS une URL de toi-même
@@ -502,7 +502,7 @@ FORMAT — dans cet ordre, UNIQUEMENT si la section a des données réelles :
 ### 📸 Instagram
 ### 👥 Facebook
 ### 💬 Reddit
-### 💬 Forums professionnels
+### 💬 Forums & Sites éducatifs
 
 Pour Articles les plus cités : affiche MINIMUM 5 articles tagués [Très cité], [Récent] ou [Cité + Récent].
 Pour Instagram : affiche EXACTEMENT le titre tel qu'il apparaît dans les résultats ET le handle (@username). Ne raccourcis jamais le nom du compte.
@@ -539,9 +539,10 @@ export default async function handler(req, res) {
         max_tokens: 5,
         temperature: 0,
         messages: [
-          { role: "system", content: `Tu es un routeur. Lis la conversation et réponds UNIQUEMENT par "search" ou "answer".
-"search" = l'utilisateur cherche des ressources/protocoles/articles/livres/communautés sur un sujet clinique.
-"answer" = l'utilisateur veut une reformulation, synthèse, explication, définition, comparaison, ou envoie un texte à traiter.` },
+          { role: "system", content: `Tu es un routeur. Réponds UNIQUEMENT par "search" ou "answer".
+"search" = l'utilisateur demande EXPLICITEMENT des ressources, protocoles, articles, livres, comptes Instagram, forums sur un sujet clinique précis.
+"answer" = tout le reste : salutation, remerciement, compliment, question sur tes capacités, reformulation, synthèse, explication, définition, question générale, message court sans sujet clinique précis.
+En cas de doute → "answer".` },
           ...messages.slice(-6),
         ]
       }),
@@ -549,7 +550,7 @@ export default async function handler(req, res) {
     const routeData = await routeRes.json();
     // Force search if user explicitly asks for resources
     const forceSearch = /cherche.moi|recherche.*ressources|ressources cliniques/i.test(lastMessage);
-    const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "search").toLowerCase().includes("answer") ? "answer" : "search");
+    const route = forceSearch ? "search" : ((routeData.choices?.[0]?.message?.content || "answer").toLowerCase().includes("search") && !routeData.choices?.[0]?.message?.content?.toLowerCase().includes("answer") ? "search" : "answer");
 
     // ── Resource button clicked: extract topic → use as search query ──
     // This replaces the generic "cherche moi les ressources..." with the
@@ -708,7 +709,7 @@ Toujours en français, concis et précis.` },
         baseCount
       ) : Promise.resolve(""),
       has("forums") ? braveSearch(
-        `${q.forums} forum OR discussion OR communauté france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:youtube.com`,
+        `${q.forums} (site:clepsy.fr OR forum OR discussion OR communauté) france -site:reddit.com -site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:youtube.com`,
         baseCount
       ) : Promise.resolve(""),
     ]);
