@@ -752,7 +752,7 @@ export default function MindBase() {
             <button onClick={()=>setAnalyseOpen(true)} title="Analyser PDFs et liens" style={{ padding:"8px 10px", background:"#f0ede6", border:"1px solid #cec9bf", borderRadius:10, fontSize:16, cursor:"pointer", flexShrink:0, color:"#6b6560" }}>📎</button>
             <button onClick={()=>sendMessage(input)} disabled={loading||!input.trim()} style={{ padding: isMobile ? "8px 12px" : "8px 18px", background:loading||!input.trim()?"#cec9bf":"#2d5a3d", color:"#fff", border:"none", borderRadius:10, fontSize:13, cursor:loading||!input.trim()?"not-allowed":"pointer", fontWeight:500, fontFamily:"system-ui,sans-serif", flexShrink:0 }}>{loading?"…": isMobile ? "→" : "Envoyer →"}</button>
           </div>
-          {!isMobile && <div style={{ fontSize:11, color:"#a09a93", marginTop:7, textAlign:"center" }}>HAS · ANSM · Inserm · OMS · PubMed · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac</div>}
+          {!isMobile && <div style={{ fontSize:11, color:"#a09a93", marginTop:7, textAlign:"center" }}>HAS · ANSM · Inserm · OMS · PubMed · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac · CléPsy</div>}
         </div>
       </div>
       {/* History panel */}
