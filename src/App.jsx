@@ -652,7 +652,7 @@ export default function MindBase() {
 
         <div style={{ marginTop:"auto", padding:"10px 14px", borderTop:"1px solid #e2ddd5" }}>
           <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginBottom:8 }}>
-            {["HAS","ANSM","Inserm","OMS","PubMed","YouTube","Instagram","Facebook","Amazon.fr","Fnac","Reddit","LinkedIn"].map(s=><span key={s} style={{ fontSize:9, padding:"2px 5px", borderRadius:20, background:"#f0ede6", color:"#6b6560", border:"1px solid #e2ddd5" }}>{s}</span>)}
+            {["HAS","ANSM","Inserm","OMS","PubMed","YouTube","Instagram","Facebook","Amazon.fr","Fnac","Reddit","LinkedIn","CléPsy"].map(s=><span key={s} style={{ fontSize:9, padding:"2px 5px", borderRadius:20, background:"#f0ede6", color:"#6b6560", border:"1px solid #e2ddd5" }}>{s}</span>)}
           </div>
           <div style={{ fontSize:9, color:"#b0a9a0", lineHeight:1.5, borderTop:"1px solid #f0ede6", paddingTop:8 }}>
             ⚠️ Outil d'aide à la décision uniquement. Les informations fournies peuvent contenir des erreurs — vérifiez toujours auprès de sources officielles. Cet outil est développé et maintenu par Ely Devaria à titre personnel. ThIA Santé Mentale n'est pas impliquée dans son développement et n'est pas responsable de son contenu ou de son utilisation.
