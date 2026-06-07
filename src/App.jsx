@@ -69,13 +69,13 @@ function renderInline(text) {
   while ((m = re.exec(cleaned)) !== null) {
     if (m.index > last) parts.push(<span key={last}>{cleaned.slice(last, m.index)}</span>);
     if (m[1]) {
-      const url = m[3].replace(/[\)\]>.,;:!?]+$/, "");
+      const url = m[3].replace(/[\)\]>.,;:!?]+$/, "").replace(/\$\d+$/, "");
       const label = m[2].replace(/🔗\s*/g, "").trim() || url;
       parts.push(<a key={m.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color:"#2d5a3d", fontSize:12, borderBottom:"1px solid #a8cdb5", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:3 }}>🔗 {label}</a>);
     } else if (m[4]) {
       parts.push(<strong key={m.index}>{m[5]}</strong>);
     } else if (m[6]) {
-      const url = m[6].replace(/[\)\]>.,;:!?]+$/, "");
+      const url = m[6].replace(/[\)\]>.,;:!?]+$/, "").replace(/\$\d+$/, "");
       parts.push(<a key={m.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color:"#2d5a3d", fontSize:11, wordBreak:"break-all", borderBottom:"1px solid #a8cdb5", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:3 }}>🔗 {url}</a>);
     }
     last = re.lastIndex;
@@ -613,7 +613,7 @@ export default function MindBase() {
       {analyseOpen && <AnalyseModal onAnalyse={handleAnalyse} onClose={()=>setAnalyseOpen(false)} />}
 
       {/* Sidebar */}
-      <aside style={{ width:220, background:"#fff", borderRight:"1px solid #e2ddd5", display: isMobile ? "none" : "flex", flexDirection:"column", flexShrink:0, ...(isMobile && sidebarOpen ? { display:"flex", position:"fixed", top:0, left:0, height:"100vh", zIndex:450, transform:"translateX(0)", transition:"transform 0.25s ease", boxShadow:"4px 0 20px rgba(0,0,0,0.15)" } : {}) }}>
+      <aside style={{ width:220, background:"#fff", borderRight:"1px solid #e2ddd5", display: isMobile ? "none" : "flex", flexDirection:"column", flexShrink:0, overflowY:"auto", ...(isMobile && sidebarOpen ? { display:"flex", position:"fixed", top:0, left:0, height:"100vh", zIndex:450, transform:"translateX(0)", transition:"transform 0.25s ease", boxShadow:"4px 0 20px rgba(0,0,0,0.15)" } : {}) }}>
         <div style={{ padding:"20px 18px 16px", borderBottom:"1px solid #e2ddd5" }}>
           <div style={{ fontFamily:"Georgia,serif", fontSize:22, color:"#2d5a3d" }}>MindBase</div>
           <div style={{ fontSize:11, color:"#a09a93", marginTop:2 }}>Agent clinique · Santé mentale</div>
@@ -651,10 +651,7 @@ export default function MindBase() {
         </div>
 
         <div style={{ marginTop:"auto", padding:"10px 14px", borderTop:"1px solid #e2ddd5" }}>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginBottom:8 }}>
-            {["HAS","ANSM","Inserm","OMS","PubMed","YouTube","Instagram","Facebook","Amazon.fr","Fnac","Reddit","LinkedIn","CléPsy"].map(s=><span key={s} style={{ fontSize:9, padding:"2px 5px", borderRadius:20, background:"#f0ede6", color:"#6b6560", border:"1px solid #e2ddd5" }}>{s}</span>)}
-          </div>
-          <div style={{ fontSize:9, color:"#b0a9a0", lineHeight:1.5, borderTop:"1px solid #f0ede6", paddingTop:8 }}>
+          <div style={{ fontSize:9, color:"#b0a9a0", lineHeight:1.5 }}>
             ⚠️ Outil d'aide à la décision uniquement. Les informations fournies peuvent contenir des erreurs — vérifiez toujours auprès de sources officielles. Cet outil est développé et maintenu par Ely Devaria à titre personnel. ThIA Santé Mentale n'est pas impliquée dans son développement et n'est pas responsable de son contenu ou de son utilisation.
           </div>
         </div>
