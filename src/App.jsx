@@ -422,9 +422,15 @@ export default function MindBase() {
   const [showLibrary, setShowLibrary] = useState(false);
   const [library, setLibrary] = useState([]);
   const [toast, setToast] = useState("");
+  const [conversations, setConversations] = useState([]);
+  const [currentConvId, setCurrentConvId] = useState(null);
+  const setConvId = (id) => { setCurrentConvId(id); currentConvIdRef.current = id; };
+  const [showHistory, setShowHistory] = useState(false);
   const chatRef = useRef(null);
+  const saveTimerRef = useRef(null);
+  const currentConvIdRef = useRef(null);
 
-  useEffect(() => { if (userId) loadLibrary(userId); }, [userId]);
+  useEffect(() => { if (userId) { loadLibrary(userId); loadConversations(userId); } }, [userId]);
   useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [messages, loading]);
 
   async function loadLibrary(uid) {
@@ -436,6 +442,70 @@ export default function MindBase() {
   }
 
   function showToast(msg) { setToast(msg); setTimeout(()=>setToast(""), 2500); }
+
+  async function loadConversations(uid) {
+    try {
+      const res = await fetch(`${API}/api/library?conversations=1&userId=${encodeURIComponent(uid)}`);
+      const data = await res.json();
+      setConversations(data.conversations || []);
+    } catch(e) { setConversations([]); }
+  }
+
+  async function loadConversation(id) {
+    try {
+      const res = await fetch(`${API}/api/library?conversations=1&userId=${encodeURIComponent(userId)}&id=${id}`);
+      const data = await res.json();
+      if (data.messages) {
+        const msgs = data.messages;
+        setMessages(msgs);
+        setHistory(msgs.map(m => ({ role: m.type === "user" ? "user" : "assistant", content: m.text })));
+        setCurrentConvId(id);
+        setShowHistory(false);
+      }
+    } catch(e) {}
+  }
+
+  async function saveConversation(msgs, convId) {
+    if (!userId || msgs.length === 0) return;
+    try {
+      // Generate title from first user message
+      const firstUser = msgs.find(m => m.type === "user");
+      const title = firstUser ? firstUser.text.slice(0, 60).replace(/[#*\n]/g, " ").trim() : "Conversation";
+      if (convId) {
+        await fetch(`${API}/api/library?conversations=1&id=${convId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: msgs }),
+        });
+      } else {
+        const res = await fetch(`${API}/api/library?conversations=1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, title, messages: msgs }),
+        });
+        const data = await res.json();
+        console.log("save response:", data);
+        if (data.id) setConvId(data.id);
+      }
+      loadConversations(userId);
+    } catch(e) { console.error("saveConversation error:", e); }
+  }
+
+  function newConversation() {
+    setMessages([]);
+    setHistory([]);
+    setConvId(null);
+    setInput("");
+    setShowHistory(false);
+  }
+
+  async function deleteConversation(id) {
+    try {
+      await fetch(`${API}/api/library?conversations=1&id=${id}`, { method: "DELETE" });
+      setConversations(c => c.filter(x => x.id !== id));
+      if (currentConvId === id) newConversation();
+    } catch(e) {}
+  }
 
   async function saveToLibrary({ title, tags, note, content }) {
     try {
@@ -493,7 +563,13 @@ export default function MindBase() {
         ));
       }
       setHistory([...newHistory, { role:"assistant", content:data.reply }].slice(-16));
-      setMessages(m=>[...m, { type:"agent", text:data.reply, conversational:data.conversational }]);
+      setMessages(m => {
+        const updated = [...m, { type:"agent", text:data.reply, conversational:data.conversational }];
+        // Auto-save conversation after each exchange
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => saveConversation(updated, currentConvIdRef.current), 1000);
+        return updated;
+      });
     } catch(e) {
       setMessages(m=>[...m, { type:"error", text:e.message }]);
     }
@@ -559,14 +635,27 @@ export default function MindBase() {
           <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#4a4540" }}>Analyser PDFs &amp; liens</div><div style={{ fontSize:10, color:"#a09a93" }}>Plusieurs fichiers et URLs</div></div>
         </button>
 
+        <button onClick={()=>{ loadConversations(userId); setShowHistory(true); }} style={{ margin:"8px 14px 0", padding:"10px 14px", background:"#f5f3ee", border:"1px solid #e2ddd5", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>e.currentTarget.style.background="#eaf3ee"} onMouseLeave={e=>e.currentTarget.style.background="#f5f3ee"}>
+          <span style={{ fontSize:16 }}>🕐</span>
+          <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#4a4540" }}>Historique</div><div style={{ fontSize:10, color:"#a09a93" }}>{conversations.length} conversation{conversations.length!==1?"s":""}</div></div>
+        </button>
+
+        <button onClick={newConversation} style={{ margin:"8px 14px 0", padding:"10px 14px", background:"#f5f3ee", border:"1px dashed #e2ddd5", borderRadius:10, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>e.currentTarget.style.background="#eaf3ee"} onMouseLeave={e=>e.currentTarget.style.background="#f5f3ee"}>
+          <span style={{ fontSize:16 }}>✏️</span>
+          <div style={{ textAlign:"left" }}><div style={{ fontSize:13, fontWeight:500, color:"#4a4540" }}>Nouvelle conversation</div><div style={{ fontSize:10, color:"#a09a93" }}>Recommencer</div></div>
+        </button>
+
         <div style={{ padding:"14px 14px 8px", borderTop:"1px solid #f0ede6", marginTop:12 }}>
           <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.07em", color:"#a09a93", fontWeight:500, marginBottom:8 }}>Exemples de questions</div>
           {QUICK_SUGGESTIONS.map((s,i)=><button key={i} onClick={()=>sendMessage(s)} style={{ display:"block", width:"100%", textAlign:"left", padding:"7px 9px", border:"none", background:"none", fontSize:11, color:"#6b6560", borderRadius:7, cursor:"pointer", marginBottom:2, lineHeight:1.4, fontFamily:"system-ui,sans-serif" }} onMouseEnter={e=>{e.currentTarget.style.background="#eaf3ee";e.currentTarget.style.color="#2d5a3d";}} onMouseLeave={e=>{e.currentTarget.style.background="none";e.currentTarget.style.color="#6b6560";}}>{s.length>54?s.slice(0,54)+"…":s}</button>)}
         </div>
 
         <div style={{ marginTop:"auto", padding:"10px 14px", borderTop:"1px solid #e2ddd5" }}>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:3 }}>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:3, marginBottom:8 }}>
             {["HAS","ANSM","Inserm","OMS","PubMed","YouTube","Instagram","Facebook","Amazon.fr","Fnac","Reddit","LinkedIn"].map(s=><span key={s} style={{ fontSize:9, padding:"2px 5px", borderRadius:20, background:"#f0ede6", color:"#6b6560", border:"1px solid #e2ddd5" }}>{s}</span>)}
+          </div>
+          <div style={{ fontSize:9, color:"#b0a9a0", lineHeight:1.5, borderTop:"1px solid #f0ede6", paddingTop:8 }}>
+            ⚠️ Outil d'aide à la décision uniquement. Les informations fournies peuvent contenir des erreurs — vérifiez toujours auprès de sources officielles. Cet outil est développé et maintenu par Ely Devaria à titre personnel. ThIA Santé Mentale n'est pas impliquée dans son développement et n'est pas responsable de son contenu ou de son utilisation.
           </div>
         </div>
       </aside>
@@ -669,6 +758,34 @@ export default function MindBase() {
           {!isMobile && <div style={{ fontSize:11, color:"#a09a93", marginTop:7, textAlign:"center" }}>HAS · ANSM · Inserm · OMS · PubMed · YouTube · Instagram · Facebook · Reddit · Amazon.fr · Fnac</div>}
         </div>
       </div>
+      {/* History panel */}
+      {showHistory && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center" }} onClick={()=>setShowHistory(false)}>
+          <div style={{ background:"#fff", borderRadius:16, width:520, maxWidth:"93vw", maxHeight:"85vh", display:"flex", flexDirection:"column", overflow:"hidden" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ padding:"16px 20px", borderBottom:"1px solid #e2ddd5", display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ fontFamily:"Georgia,serif", fontSize:18, color:"#1c1917", flex:1 }}>🕐 Historique</div>
+              <button onClick={()=>{newConversation();}} style={{ padding:"6px 12px", background:"#eaf3ee", border:"1px solid #a8cdb5", borderRadius:20, cursor:"pointer", fontSize:11, color:"#2d5a3d", fontFamily:"system-ui,sans-serif", fontWeight:500 }}>✏️ Nouvelle</button>
+              <button onClick={()=>setShowHistory(false)} style={{ border:"none", background:"none", fontSize:22, cursor:"pointer", color:"#a09a93", lineHeight:1 }}>×</button>
+            </div>
+            <div style={{ flex:1, overflowY:"auto", padding:"12px 16px", display:"flex", flexDirection:"column", gap:6 }}>
+              {conversations.length === 0 && (
+                <div style={{ textAlign:"center", padding:"40px 20px", color:"#a09a93", fontSize:13 }}>Aucune conversation sauvegardée.<br/>Vos prochaines conversations apparaîtront ici automatiquement.</div>
+              )}
+              {conversations.map(conv => (
+                <div key={conv.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", border:`1px solid ${currentConvId===conv.id?"#a8cdb5":"#e2ddd5"}`, borderRadius:10, background:currentConvId===conv.id?"#eaf3ee":"#f9f7f4", cursor:"pointer", transition:"background 0.15s" }}
+                  onClick={()=>loadConversation(conv.id)}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:500, color:"#1c1917", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{conv.title}</div>
+                    <div style={{ fontSize:10, color:"#a09a93", marginTop:2 }}>{new Date(conv.updated_at).toLocaleDateString("fr-FR",{day:"numeric",month:"short",year:"numeric"})}</div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();if(window.confirm("Supprimer cette conversation ?"))deleteConversation(conv.id);}} style={{ border:"none", background:"none", cursor:"pointer", fontSize:14, color:"#cec9bf", flexShrink:0, padding:4 }}>🗑</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`@keyframes blink{0%,60%,100%{opacity:0.3;transform:scale(0.85)}30%{opacity:1;transform:scale(1)}}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}*::-webkit-scrollbar{width:4px}*::-webkit-scrollbar-thumb{background:#cec9bf;border-radius:2px}`}</style>
     </div>
   );
