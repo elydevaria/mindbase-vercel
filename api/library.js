@@ -14,7 +14,11 @@ async function supa(path, method = "GET", body) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return res.json();
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { message: text.slice(0, 200) }; }
+  if (!res.ok) throw new Error(data?.message || `Supabase error ${res.status}`);
+  return data;
 }
 
 export default async function handler(req, res) {
