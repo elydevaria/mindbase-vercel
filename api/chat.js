@@ -606,7 +606,12 @@ Toujours en français, concis et précis.` },
           temperature: 0.3,
         }),
       });
-      const convData = await convResponse.json();
+      const convData = await convResponse.json().catch(() => ({}));
+      if (!convResponse.ok || !convData.choices?.length) {
+        const msg = convData.message || convData.error?.message || `Mistral error ${convResponse.status}`;
+        process.stdout.write(`MISTRAL CONV ERROR: ${convResponse.status} ${msg}\n`);
+        return res.status(502).json({ error: `Mistral: ${msg}` });
+      }
       const convReply = convData.choices?.[0]?.message?.content || "Je n'ai pas pu générer une réponse.";
       const withOffer = convReply + "\n\n---\n*Souhaitez-vous que je recherche des **ressources cliniques** sur ce sujet ?*";
       return res.json({ reply: withOffer, conversational: true });
