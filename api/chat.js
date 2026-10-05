@@ -1,6 +1,17 @@
 export const config = { maxDuration: 60 };
 
 const MISTRAL_API = "https://api.mistral.ai/v1/chat/completions";
+
+// Mistral rate-limits aggressively (429); retry with backoff before giving up.
+async function mistralFetch(url, options, retries = 3) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429 || attempt >= retries) return res;
+    const retryAfter = Number(res.headers.get("retry-after"));
+    const wait = Math.min(retryAfter > 0 ? retryAfter * 1000 : 1500 * (attempt + 1), 6000);
+    await new Promise(r => setTimeout(r, wait));
+  }
+}
 const BRAVE_KEY = process.env.BRAVE_API_KEY;
 const REDDIT_CLIENT_ID = process.env.REDDIT_CLIENT_ID;
 const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET;
@@ -373,7 +384,7 @@ async function redditSearch(queryFr, queryEn) {
 async function generateQueriesAndIntent(userMessage) {
   const ALL_SECTIONS = ["protocols","pubmed","books","videos","instagram","facebook","linkedin","reddit","forums"];
   try {
-    const res = await fetch(MISTRAL_API, {
+    const res = await mistralFetch(MISTRAL_API, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -528,7 +539,7 @@ export default async function handler(req, res) {
     process.stdout.write(`SUPABASE_KEY set: ${!!process.env.SUPABASE_ANON_KEY}\n`);
 
     // ── Step 0: Mistral decides: search resources OR answer directly ─
-    const routeRes = await fetch(MISTRAL_API, {
+    const routeRes = await mistralFetch(MISTRAL_API, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -556,7 +567,7 @@ En cas de doute → "answer".` },
     // This replaces the generic "cherche moi les ressources..." with the
     // precise clinical topic. Only THIS topic gets cached — not the generic message.
     if (forceSearch) {
-      const topicRes = await fetch(MISTRAL_API, {
+      const topicRes = await mistralFetch(MISTRAL_API, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}` },
         body: JSON.stringify({
@@ -585,7 +596,7 @@ En cas de doute → "answer".` },
 
     if (route === "answer") {
       process.stdout.write("CONVERSATIONAL — skipping searches\n");
-      const convResponse = await fetch(MISTRAL_API, {
+      const convResponse = await mistralFetch(MISTRAL_API, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -746,7 +757,7 @@ RAPPEL : URLs exactes. Respecte l'ordre. Min 5 PubMed. Max 5 Forums. 2 lignes ma
       },
     ];
 
-    const response = await fetch(MISTRAL_API, {
+    const response = await mistralFetch(MISTRAL_API, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
